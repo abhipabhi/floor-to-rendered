@@ -60,6 +60,9 @@ BUILDING_FIELDS = (
     "parapet_thickness_ft",
     "railing_ft",
     "roof_slab_thickness_ft",
+    "plinth_beam_depth_ft",
+    "slab_projection_ft",
+    "excavation_depth_ft",
 )
 
 #: two readings this close are the same reading, not a disagreement

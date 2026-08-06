@@ -219,6 +219,11 @@ class BuildParams(BaseModel):
     # None → the top storey's slab thickness, which is what a roof slab was
     # silently borrowing before it could be asked about separately
     roof_slab_thickness_ft: float | None = None
+    # Facts the structural sheets state outright. None until a reader finds one,
+    # so they are absent rather than invented when the set does not include them.
+    plinth_beam_depth_ft: float | None = None
+    slab_projection_ft: float | None = None
+    excavation_depth_ft: float | None = None
     levels: list[LevelParams] = Field(default_factory=list)
     columns: bool = True
     glazing: bool = True

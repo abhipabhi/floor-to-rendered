@@ -23,7 +23,7 @@ from .glb import write_glb
 from .models import BuildParams, JobState, Opening, PlanExtract, SheetInfo
 from .obj import texture_files, write_mtl, write_obj
 from .pdfvec import render_page_png
-from .pipeline import default_params, extract_included
+from .pipeline import default_params, extract_included, sheet_readings
 from .units import fmt_ft
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -103,6 +103,10 @@ def _reextract(state: JobState, scale: float | None = None) -> list[str]:
             lp for lp in state.params.levels if any(e.level == lp.level for e in extracts.values())
         ]
         state.params.levels.sort(key=lambda lp: lp.level)
+    # what the structural sheets state, applied over the defaults but under
+    # anything the user has pinned
+    notes += datum.resolve(state.params, sheet_readings(ing, state.sheets))  # type: ignore[arg-type]
+    datum.seed_defaults(state.params)
     return notes
 
 

@@ -10,9 +10,11 @@ import statistics
 from dataclasses import dataclass, field
 
 from . import datum
+from . import schedule
 from . import site as site_mod
 from .build3d import BuildResult, build
 from .classify import FLOOR_PLAN, LEVEL_ORDINALS, classify, level_name, project_title
+from .datum import Reading
 from .extract import extract_plan
 from .models import BuildParams, LevelParams, PlanExtract, SheetInfo
 from .pdfvec import Sheet, load_sheet
@@ -164,6 +166,30 @@ def default_params(extracts: dict[str, PlanExtract]) -> BuildParams:
     return params
 
 
+def sheet_readings(ing: Ingest, sheets: list[SheetInfo]) -> list[Reading]:
+    """Everything the *non-plan* sheets state, as vertical readings.
+
+    v1 classified these sheets, showed them, and then ignored them. They carry
+    the only vertical dimensions anywhere in this set — beam depths, the
+    excavation, the slab projection — so they are read here and attributed to
+    the sheet they came from.
+
+    Takes ``sheets`` separately from ``ing`` for the same reason
+    :func:`extract_included` does: the caller decides which sheets are in play.
+    """
+    out: list[Reading] = []
+    raw = ing.raw
+    for si in sheets:
+        if si.kind == FLOOR_PLAN or si.id not in raw:
+            continue
+        try:
+            sheet = raw[si.id]
+        except Exception:  # an unreadable sheet must not stop the others
+            continue
+        out.extend(schedule.readings(sheet, si.id))
+    return out
+
+
 def road_xy_for(ing: Ingest, extracts: dict[str, PlanExtract]):
     """Where the lowest storey's sheet writes ROAD, in that plan's feet."""
     if not extracts:
@@ -183,5 +209,7 @@ def run(paths: list[str]) -> tuple[Ingest, dict[str, PlanExtract], BuildParams, 
     ing = ingest(paths)
     extracts, notes = extract_included(ing, ing.sheets)
     params = default_params(extracts)
+    notes += datum.resolve(params, sheet_readings(ing, ing.sheets))
+    datum.seed_defaults(params)
     result = build(list(extracts.values()), params, road_xy=road_xy_for(ing, extracts))
     return ing, extracts, params, result, notes

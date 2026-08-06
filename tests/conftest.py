@@ -44,7 +44,7 @@ def _discover() -> dict[str, str]:
             found.setdefault("ground", path)
         elif cls.kind == FLOOR_PLAN and cls.level == 1:
             found.setdefault("first", path)
-        elif cls.kind in ("layout", "foundation"):
+        elif cls.kind in ("layout", "foundation", "tie_beam", "detail", "services"):
             found.setdefault(cls.kind, path)
     return found
 
@@ -55,6 +55,14 @@ GF = _SHEETS.get("ground", "")
 FF = _SHEETS.get("first", "")
 LAYOUT = _SHEETS.get("layout", "")
 FOOTING = _SHEETS.get("foundation", "")
+TIE_BEAM = _SHEETS.get("tie_beam", "")
+DETAIL = _SHEETS.get("detail", "")
+SERVICES = _SHEETS.get("services", "")
+
+needs_schedules = pytest.mark.skipif(
+    not (TIE_BEAM and DETAIL),
+    reason="example drawing set not present (it is not published with the code)",
+)
 
 needs_example = pytest.mark.skipif(
     not (GF and FF and LAYOUT and FOOTING),
@@ -88,6 +96,21 @@ def ff_extract(ff_sheet):
     from app.extract import extract_plan
 
     return extract_plan(ff_sheet, "ff", 1, "First floor")
+
+
+@pytest.fixture(scope="session")
+def detail_sheet():
+    """The reinforcement-details sheet: the footing schedule and the notes."""
+    from app.pdfvec import load_sheet
+
+    return load_sheet(DETAIL, os.path.basename(DETAIL))
+
+
+@pytest.fixture(scope="session")
+def tie_beam_sheet():
+    from app.pdfvec import load_sheet
+
+    return load_sheet(TIE_BEAM, os.path.basename(TIE_BEAM))
 
 
 @pytest.fixture

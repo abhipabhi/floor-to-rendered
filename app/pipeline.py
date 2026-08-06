@@ -9,6 +9,7 @@ import os
 import statistics
 from dataclasses import dataclass, field
 
+from . import datum
 from . import site as site_mod
 from .build3d import BuildResult, build
 from .classify import FLOOR_PLAN, LEVEL_ORDINALS, classify, level_name, project_title
@@ -145,7 +146,11 @@ def extract_included(
 
 
 def default_params(extracts: dict[str, PlanExtract]) -> BuildParams:
-    """Sensible vertical parameters for the storeys found."""
+    """Sensible vertical parameters for the storeys found.
+
+    Every one of them is an assumption, and each is labelled as one, so the
+    heights page can say so per number instead of in a banner over the lot.
+    """
     params = BuildParams()
     for ex in sorted(extracts.values(), key=lambda e: e.level):
         params.levels.append(
@@ -155,6 +160,7 @@ def default_params(extracts: dict[str, PlanExtract]) -> BuildParams:
                 floor_to_floor_ft=10.0,
             )
         )
+    datum.seed_defaults(params)
     return params
 
 

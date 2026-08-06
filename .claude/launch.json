@@ -4,7 +4,7 @@
     {
       "name": "floor-to-rendered",
       "runtimeExecutable": ".venv/bin/uvicorn",
-      "runtimeArgs": ["app.main:app", "--port", "8020"],
+      "runtimeArgs": ["app.main:app", "--reload", "--port", "8020"],
       "port": 8020
     }
   ]

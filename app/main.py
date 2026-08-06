@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import datum
 from . import storage
 from .blender import blender_script
 from .build3d import build
@@ -340,6 +341,11 @@ def reset_sheet(job_id: str, sheet_id: str) -> dict:
 @app.put("/api/jobs/{job_id}/params")
 def set_params(job_id: str, params: BuildParams) -> dict:
     state = _get(job_id)
+    # Which heights are yours is decided here, by comparing what arrived with
+    # what was stored — not by trusting the browser to declare it. That keeps
+    # API clients honest and stops a pin drifting away from the value it pins.
+    datum.pin_user_edits(state.params, params)
+    datum.seed_defaults(params)
     state.params = params
     state.build = None
     storage.save_state(state)
@@ -397,10 +403,17 @@ def _readme(state: JobState, summary: dict) -> str:
         "openings, columns, room sizes, and the drawing scale, which is derived by",
         "measuring rooms against their own printed dimension labels.",
         "",
-        "Assumed, because a floor plan contains no vertical information at all:",
-        "every height. Floor-to-floor, plinth, sill, lintel, slab and parapet come",
-        "from the parameters set in the web interface, not from the drawings.",
+        "A floor plan states no heights, so every height below is either read off",
+        "some other sheet in the set or assumed. Each one says which.",
+        "",
     ]
+    rows = datum.rows(state.params)
+    if rows:
+        w = max(len(r[0]) for r in rows)
+        for what, value, story in rows:
+            lines.append(f"{what:<{w}}  {value:>8}   {story}")
+    else:
+        lines.append("(no heights recorded)")
     return "\n".join(lines) + "\n"
 
 

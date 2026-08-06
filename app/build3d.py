@@ -267,13 +267,15 @@ def build(
     lp_top = params.level(top_level) or LevelParams(level=top_level, name="top")
     base_top, f2f_top, _wh = elevations[top_level]
     roof_top = base_top + f2f_top
+    roof_slab_t = params.roof_slab_thickness_ft or lp_top.slab_thickness_ft
     if params.roof != "none" and top_footprint:
         _slab(
             scene,
             "Roof slab",
             top_footprint,
-            roof_top - lp_top.slab_thickness_ft,
+            roof_top - roof_slab_t,
             roof_top,
+            material="roof",
         )
     if params.roof == "flat_parapet" and params.parapet_ft > 0 and top_footprint:
         # the parapet follows the roof outline, not the walls, so the ring always

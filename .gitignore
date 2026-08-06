@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+data/jobs/
+build/
+.DS_Store
+
+# The example drawings are a real client's: they carry a name, a site address
+# and the designer's phone number in the title block, so they are not published.
+# Everything that needs them skips cleanly without them (see tests/conftest.py).
+example/

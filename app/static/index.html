@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>floor to rendered</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏗️</text></svg>">
+<script type="importmap">
+{ "imports": { "three": "/static/vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+
+<header>
+  <h1>floor&nbsp;<span class="arrow">→</span>&nbsp;rendered</h1>
+  <p class="sub">Floor-plan PDFs in. A 3D building model for Blender or Twinmotion out.</p>
+  <div class="job-bar" id="jobbar" hidden>
+    <span id="jobtitle"></span>
+    <button class="link" id="newjob">start a new set</button>
+  </div>
+</header>
+
+<nav class="steps" id="steps">
+  <button data-step="upload" class="on">1 · Drawings</button>
+  <button data-step="sheets" disabled>2 · Sheets</button>
+  <button data-step="check" disabled>3 · Check the read</button>
+  <button data-step="heights" disabled>4 · Heights</button>
+  <button data-step="finish" disabled>5 · Materials &amp; site</button>
+  <button data-step="model" disabled>6 · 3D model</button>
+</nav>
+
+<main>
+
+<!-- 1 ─────────────────────────────────────────────── upload -->
+<section id="step-upload" class="step on">
+  <div id="drop" class="drop">
+    <p class="big">Drop the whole drawing set here</p>
+    <p class="muted">Ground floor, first floor, layout, footings — all of it. The
+      floor plans become storeys; everything else is listed and left alone.</p>
+    <label class="btn">Choose PDFs<input type="file" id="filepick" multiple accept="application/pdf" hidden></label>
+    <p class="muted small">Vector CAD PDFs only — the geometry is read from the
+      drawing's own linework, not from a picture of it.</p>
+  </div>
+  <div id="uploading" hidden class="working"><span class="spinner"></span> Reading the drawings…</div>
+  <div id="uploaderr" class="err" hidden></div>
+
+  <div id="recent" class="recent" hidden>
+    <h3>Earlier sets</h3>
+    <ul id="recentlist"></ul>
+  </div>
+</section>
+
+<!-- 2 ─────────────────────────────────────────────── sheets -->
+<section id="step-sheets" class="step">
+  <h2>What each sheet is</h2>
+  <p class="muted">Read from the title block. Change anything that is wrong —
+    a sheet only becomes a storey if you say so.</p>
+  <div id="notes" class="notes"></div>
+  <table class="sheets" id="sheettable"></table>
+  <div class="actions">
+    <button class="btn" id="tocheck">Check what was read →</button>
+  </div>
+</section>
+
+<!-- 3 ─────────────────────────────────────────────── check -->
+<section id="step-check" class="step">
+  <h2>Check the read</h2>
+  <p class="muted">Everything below is measured off the drawing. Click an opening
+    to change it, click a bare stretch of wall to add one.</p>
+
+  <div class="check-top">
+    <div class="storey-tabs" id="storeytabs"></div>
+    <div class="layer-toggles">
+      <label><input type="checkbox" id="lay-walls" checked> walls</label>
+      <label><input type="checkbox" id="lay-open" checked> openings</label>
+      <label><input type="checkbox" id="lay-rooms" checked> rooms</label>
+      <label><input type="checkbox" id="lay-cols" checked> columns</label>
+      <label><input type="checkbox" id="lay-plan" checked> drawing</label>
+    </div>
+  </div>
+
+  <div class="check-body">
+    <div class="plan-wrap" id="planwrap">
+      <div class="plan-inner" id="planinner"></div>
+    </div>
+
+    <aside class="side">
+      <div class="card" id="scalecard"></div>
+      <div class="card" id="selcard">
+        <h3>Nothing selected</h3>
+        <p class="muted small">Click an opening in the drawing.</p>
+      </div>
+      <div class="card" id="statscard"></div>
+      <div class="card">
+        <h3>Start over on this sheet</h3>
+        <p class="muted small">Throws away manual edits and reads the sheet again.</p>
+        <button class="btn ghost" id="resetsheet">Re-read sheet</button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="toheights">Set the heights →</button>
+  </div>
+</section>
+
+<!-- 4 ─────────────────────────────────────────────── heights -->
+<section id="step-heights" class="step">
+  <h2>Heights</h2>
+  <p class="note-strong">A floor plan contains no vertical information. Every
+    number on this page is yours, not the drawing's.</p>
+  <div id="heightsform"></div>
+  <div class="actions">
+    <button class="btn" id="tofinish">Choose materials →</button>
+  </div>
+</section>
+
+<!-- 5 ─────────────────────────────────────────── materials and site -->
+<section id="step-finish" class="step">
+  <h2>Materials &amp; site</h2>
+  <p class="note-strong">None of this is in the drawings either. Pick a starting
+    point, then change anything — colours are yours, and the compound wall,
+    planting and cars are staging that lands in its own groups so you can delete
+    them in one selection.</p>
+
+  <h3>Start from</h3>
+  <div class="presets" id="presets"></div>
+
+  <div class="finish-grid">
+    <div class="lvl-card">
+      <h3>Surfaces</h3>
+      <table class="slots" id="slottable"></table>
+    </div>
+    <div class="lvl-card">
+      <h3>Site</h3>
+      <div id="siteform"></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="tobuild">Build the 3D model →</button>
+  </div>
+</section>
+
+<!-- 5 ─────────────────────────────────────────────── model -->
+<section id="step-model" class="step">
+  <h2>3D model</h2>
+  <div id="building" class="working" hidden><span class="spinner"></span> Building…</div>
+  <div class="model-body">
+    <div class="viewer-wrap">
+      <div id="viewer"></div>
+      <div class="viewer-bar">
+        <button class="btn ghost sm" data-view="iso">Three-quarter</button>
+        <button class="btn ghost sm" data-view="north">North</button>
+        <button class="btn ghost sm" data-view="east">East</button>
+        <button class="btn ghost sm" data-view="south">South</button>
+        <button class="btn ghost sm" data-view="west">West</button>
+        <button class="btn ghost sm" data-view="top">Top</button>
+        <span class="spacer"></span>
+        <label class="chk"><input type="checkbox" id="showground" checked> ground</label>
+        <label class="chk"><input type="checkbox" id="showroof" checked> roof</label>
+        <label class="chk"><input type="checkbox" id="showrail" checked> railings</label>
+      </div>
+      <div id="viewerhint" class="muted small">drag to orbit · scroll to zoom · right-drag to pan</div>
+    </div>
+    <aside class="side">
+      <div class="card" id="buildsummary"></div>
+      <div class="card">
+        <h3>Take it into a 3D package</h3>
+        <ul class="dl" id="downloads"></ul>
+        <details>
+          <summary>How to open it</summary>
+          <p><b>Blender</b> (free) — File ▸ Import ▸ glTF 2.0, pick
+            <code>model.glb</code>. Or run
+            <code>blender --python blender_import.py</code> for a scene with a
+            sun and a camera already set up.</p>
+          <p><b>Twinmotion</b> (free tier) — Import ▸ Geometry ▸
+            <code>model.glb</code>. Direct Import reads glTF; keep the unit
+            setting at metres.</p>
+          <p>Anything else — <code>model.obj</code> with
+            <code>model.mtl</code> beside it.</p>
+        </details>
+      </div>
+    </aside>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>Walls, thicknesses, openings, columns and the drawing scale are measured
+     from the PDFs' own vector geometry. Every height is a setting you chose.
+     Nothing here is generated by a model.</p>
+</footer>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,402 @@
+"""Plan geometry + vertical parameters → a 3D building.
+
+A floor plan contains no vertical information whatsoever. Every height in the
+output — plinth, floor-to-floor, sill, lintel, slab, parapet — comes from the
+parameters the user sets, never from the drawing and never from a guess dressed
+up as one. What the plans decide is the *plan*: where walls are, how thick, and
+where the holes go.
+
+Model space is metres, Y up, which is what glTF, Blender and Twinmotion all
+expect. Feet survive right up to the last multiplication.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from . import site as site_mod
+from .finish import materials_for
+from .footprint import footprint_rects, ring_rects
+from .mesh import Scene
+from .models import BuildParams, LevelParams, PlanExtract, Wall
+from .units import FT_TO_M
+
+
+@dataclass
+class BuildResult:
+    scene: Scene
+    summary: dict
+
+
+# --------------------------------------------------------------------------- #
+# walls with openings
+# --------------------------------------------------------------------------- #
+def _opening_band(op, lp: LevelParams) -> tuple[float, float]:
+    """Sill and head for an opening, in feet above this storey's floor."""
+    if op.kind == "door":
+        sill = 0.0 if op.sill_ft is None else op.sill_ft
+        head = lp.door_head_ft if op.head_ft is None else op.head_ft
+    else:
+        sill = lp.window_sill_ft if op.sill_ft is None else op.sill_ft
+        head = lp.window_head_ft if op.head_ft is None else op.head_ft
+    return sill, head
+
+
+def add_wall(
+    scene: Scene,
+    wall: Wall,
+    base_ft: float,
+    height_ft: float,
+    lp: LevelParams,
+    group: str,
+    material: str,
+    params: BuildParams,
+    glazing_group: str,
+    door_group: str,
+) -> None:
+    """One wall, split into piers, sills and lintels around its openings."""
+    m = scene.mesh(group, material)
+    u0, u1 = wall.u_range()
+    top = base_ft + height_ft
+
+    ops = sorted(
+        (o for o in wall.openings if o.u1 > u0 and o.u0 < u1),
+        key=lambda o: min(o.u0, o.u1),
+    )
+    spans = []  # (a, b, sill, head, opening)
+    for o in ops:
+        a, b = sorted((o.u0, o.u1))
+        a, b = max(a, u0), min(b, u1)
+        if b - a < 0.05:
+            continue
+        sill, head = _opening_band(o, lp)
+        head = min(head, height_ft)
+        if head <= sill:
+            continue
+        spans.append((a, b, sill, head, o))
+
+    # piers between openings
+    cursor = u0
+    for a, b, _s, _h, _o in spans:
+        if a > cursor:
+            _box_along(m, wall, cursor, a, base_ft, top)
+        cursor = max(cursor, b)
+    if cursor < u1:
+        _box_along(m, wall, cursor, u1, base_ft, top)
+
+    # sill and lintel over each opening, then the pane or leaf inside it
+    for a, b, sill, head, _o in spans:
+        if sill > 0.001:
+            _box_along(m, wall, a, b, base_ft, base_ft + sill)
+        if head < height_ft - 0.001:
+            _box_along(m, wall, a, b, base_ft + head, top)
+
+    for a, b, sill, head, o in spans:
+        if o.kind == "window" and params.glazing:
+            pane = scene.mesh(glazing_group, "glazing")
+            _box_along(
+                pane, wall, a, b, base_ft + sill, base_ft + head, thickness_ft=0.06
+            )
+        elif o.kind == "door" and params.doors:
+            leaf = scene.mesh(door_group, "door")
+            _box_along(
+                leaf, wall, a, b, base_ft + sill, base_ft + head, thickness_ft=0.12
+            )
+
+
+def _box_along(
+    mesh,
+    wall: Wall,
+    a: float,
+    b: float,
+    z0: float,
+    z1: float,
+    thickness_ft: float | None = None,
+) -> None:
+    """A box spanning ``a..b`` along the wall, full thickness unless told otherwise."""
+    if wall.axis == "h":
+        y0, y1 = wall.y0, wall.y1
+        if thickness_ft is not None:
+            c = (y0 + y1) / 2
+            y0, y1 = c - thickness_ft / 2, c + thickness_ft / 2
+        mesh.add_box(
+            a * FT_TO_M, z0 * FT_TO_M, y0 * FT_TO_M, b * FT_TO_M, z1 * FT_TO_M, y1 * FT_TO_M
+        )
+    else:
+        x0, x1 = wall.x0, wall.x1
+        if thickness_ft is not None:
+            c = (x0 + x1) / 2
+            x0, x1 = c - thickness_ft / 2, c + thickness_ft / 2
+        mesh.add_box(
+            x0 * FT_TO_M, z0 * FT_TO_M, a * FT_TO_M, x1 * FT_TO_M, z1 * FT_TO_M, b * FT_TO_M
+        )
+
+
+def _slab(scene: Scene, group: str, rects, z0: float, z1: float, material="slab") -> None:
+    m = scene.mesh(group, material)
+    for x0, y0, x1, y1 in rects:
+        m.add_box(
+            x0 * FT_TO_M, z0 * FT_TO_M, y0 * FT_TO_M, x1 * FT_TO_M, z1 * FT_TO_M, y1 * FT_TO_M
+        )
+
+
+# --------------------------------------------------------------------------- #
+# the building
+# --------------------------------------------------------------------------- #
+def level_elevations(
+    extracts: list[PlanExtract], params: BuildParams
+) -> dict[int, tuple[float, float, float]]:
+    """level → (floor elevation ft, floor-to-floor ft, wall height ft)."""
+    levels = sorted({e.level for e in extracts})
+    out: dict[int, tuple[float, float, float]] = {}
+    z = params.plinth_ft
+    # levels at or above ground stack upwards from the plinth
+    for lv in [x for x in levels if x >= 0]:
+        lp = params.level(lv) or LevelParams(level=lv, name=f"Level {lv}")
+        h = lp.wall_height_ft or (lp.floor_to_floor_ft - lp.slab_thickness_ft)
+        out[lv] = (z, lp.floor_to_floor_ft, h)
+        z += lp.floor_to_floor_ft
+    # anything below ground hangs off the ground floor
+    z = params.plinth_ft
+    for lv in sorted((x for x in levels if x < 0), reverse=True):
+        lp = params.level(lv) or LevelParams(level=lv, name=f"Level {lv}")
+        z -= lp.floor_to_floor_ft
+        h = lp.wall_height_ft or (lp.floor_to_floor_ft - lp.slab_thickness_ft)
+        out[lv] = (z, lp.floor_to_floor_ft, h)
+    return out
+
+
+def build(
+    extracts: list[PlanExtract],
+    params: BuildParams,
+    road_xy: tuple[float, float] | None = None,
+) -> BuildResult:
+    """Assemble every included storey, and its site, into one scene.
+
+    ``road_xy`` is where the sheet writes ROAD, in plan feet — it decides which
+    way the gate and driveway face.
+    """
+    extracts = [
+        e
+        for e in extracts
+        if (params.level(e.level) is None or params.level(e.level).include)
+    ]
+    extracts = sorted(extracts, key=lambda e: e.level)
+    scene = Scene(materials=materials_for(params.finish.resolved()))
+    if not extracts:
+        return BuildResult(scene, {"levels": [], "note": "no storeys included"})
+
+    elevations = level_elevations(extracts, params)
+    summary_levels = []
+    top_level = max(e.level for e in extracts)
+    top_footprint: list[tuple[float, float, float, float]] = []
+    top_walls: list[Wall] = []
+
+    for ex in extracts:
+        lp = params.level(ex.level) or LevelParams(level=ex.level, name=ex.level_name)
+        base, f2f, wh = elevations[ex.level]
+        name = ex.level_name
+
+        rects = footprint_rects(ex.walls, columns=ex.columns)
+        _slab(scene, f"{name} slab", rects, base - lp.slab_thickness_ft, base)
+
+        for w in ex.walls:
+            if w.is_railing:
+                # a balcony guard: same plan, waist height, its own material
+                add_wall(
+                    scene,
+                    w,
+                    base,
+                    w.height_ft or params.railing_ft,
+                    lp,
+                    group=f"{name} railings",
+                    material="railing",
+                    params=params,
+                    glazing_group=f"{name} glazing",
+                    door_group=f"{name} doors",
+                )
+                continue
+            add_wall(
+                scene,
+                w,
+                base,
+                w.height_ft or wh,
+                lp,
+                group=f"{name} external walls" if w.exterior else f"{name} walls",
+                material="wall_ext" if w.exterior else "wall_int",
+                params=params,
+                glazing_group=f"{name} glazing",
+                door_group=f"{name} doors",
+            )
+
+        if params.columns and ex.columns:
+            cm = scene.mesh(f"{name} columns", "column")
+            inset = 0.004  # keeps column faces off the wall faces
+            for c in ex.columns:
+                cm.add_box(
+                    (c.x0 + inset) * FT_TO_M,
+                    (base - lp.slab_thickness_ft) * FT_TO_M,
+                    (c.y0 + inset) * FT_TO_M,
+                    (c.x1 - inset) * FT_TO_M,
+                    (base + wh) * FT_TO_M,
+                    (c.y1 - inset) * FT_TO_M,
+                )
+
+        summary_levels.append(
+            {
+                "level": ex.level,
+                "name": name,
+                "floor_elevation_ft": round(base, 3),
+                "wall_height_ft": round(wh, 3),
+                "walls": sum(1 for w in ex.walls if not w.is_railing),
+                "railings": sum(1 for w in ex.walls if w.is_railing),
+                "doors": sum(1 for w in ex.walls for o in w.openings if o.kind == "door"),
+                "windows": sum(
+                    1 for w in ex.walls for o in w.openings if o.kind == "window"
+                ),
+                "columns": len(ex.columns),
+                "area_sqft": round(sum((r[2] - r[0]) * (r[3] - r[1]) for r in rects), 1),
+            }
+        )
+        if ex.level == top_level:
+            top_footprint = rects
+            top_walls = ex.walls
+
+    # roof
+    lp_top = params.level(top_level) or LevelParams(level=top_level, name="top")
+    base_top, f2f_top, _wh = elevations[top_level]
+    roof_top = base_top + f2f_top
+    if params.roof != "none" and top_footprint:
+        _slab(
+            scene,
+            "Roof slab",
+            top_footprint,
+            roof_top - lp_top.slab_thickness_ft,
+            roof_top,
+        )
+    if params.roof == "flat_parapet" and params.parapet_ft > 0 and top_footprint:
+        # the parapet follows the roof outline, not the walls, so the ring always
+        # closes — including along a balcony edge where there is no wall below
+        _slab(
+            scene,
+            "Parapet",
+            ring_rects(
+                top_walls, params.parapet_thickness_ft, rects=top_footprint
+            ),
+            roof_top,
+            roof_top + params.parapet_ft,
+            material="trim",
+        )
+
+    # the plinth: the band of wall between the ground and the ground floor, given
+    # its own material so a stone or tiled base reads the way it does on site
+    ground_ex = min(extracts, key=lambda e: e.level)
+    base_ground, _f2f, _wh = elevations[ground_ex.level]
+    if params.plinth_ft > 0.02:
+        _slab(
+            scene,
+            "Plinth",
+            footprint_rects(ground_ex.walls, columns=ground_ex.columns),
+            0.0,
+            base_ground - (params.level(ground_ex.level) or LevelParams(
+                level=ground_ex.level, name="g")).slab_thickness_ft,
+            material="base",
+        )
+
+    # site
+    bounds_ft = _plan_bounds(extracts)
+    site_summary: dict = {}
+    if params.site.enabled and bounds_ft:
+        site_summary = site_mod.populate(
+            scene, ground_ex, params.site, ground_z=0.0, road_xy=road_xy
+        )
+    elif params.ground and bounds_ft:
+        g = params.ground_margin_ft
+        gm = scene.mesh("Site — ground", "ground")
+        gm.add_box(
+            (bounds_ft[0] - g) * FT_TO_M,
+            -0.5 * FT_TO_M,
+            (bounds_ft[1] - g) * FT_TO_M,
+            (bounds_ft[2] + g) * FT_TO_M,
+            0.0,
+            (bounds_ft[3] + g) * FT_TO_M,
+        )
+
+    scene.prune()
+
+    north = next((e.north_deg for e in extracts if e.north_deg is not None), None)
+    rotation = 0.0
+    if params.align_north and north is not None:
+        rotation = _snap90(90.0 - north)
+        rotate_scene(scene, rotation)
+    centre_scene(scene)
+
+    b = scene.bounds()
+    summary = {
+        "levels": summary_levels,
+        "roof_top_ft": round(roof_top, 3),
+        "overall_height_ft": round(
+            roof_top + (params.parapet_ft if params.roof == "flat_parapet" else 0.0), 2
+        ),
+        "north_deg": north,
+        "rotation_applied_deg": round(rotation, 2),
+        "triangles": scene.triangle_count,
+        "vertices": scene.vertex_count,
+        "size_m": None
+        if not b
+        else [round(b[3] - b[0], 3), round(b[4] - b[1], 3), round(b[5] - b[2], 3)],
+        "groups": [
+            {"name": m.name, "material": m.material, "triangles": m.triangle_count}
+            for m in scene.meshes
+        ],
+        "finish": params.finish.preset,
+        "textures": scene.textures,
+        "site": site_summary,
+    }
+    return BuildResult(scene, summary)
+
+
+def _plan_bounds(extracts: list[PlanExtract]):
+    xs = [v for e in extracts for w in e.walls for v in (w.x0, w.x1)]
+    ys = [v for e in extracts for w in e.walls for v in (w.y0, w.y1)]
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _snap90(deg: float, tol: float = 3.0) -> float:
+    """Snap to a right angle when the compass is within a few degrees of one.
+
+    A 0.4° rotation buys nothing and costs axis alignment for every downstream
+    tool, so it is not applied.
+    """
+    nearest = round(deg / 90.0) * 90.0
+    return nearest if abs(deg - nearest) <= tol else deg
+
+
+def rotate_scene(scene: Scene, deg: float) -> None:
+    """Rotate about Y so that geographic north points along −Z."""
+    if abs(deg) < 1e-9:
+        return
+    t = math.radians(deg)
+    c, s = math.cos(t), math.sin(t)
+    for m in scene.meshes:
+        for arr in (m.positions, m.normals):
+            for i in range(0, len(arr), 3):
+                x, z = arr[i], arr[i + 2]
+                arr[i] = x * c + z * s
+                arr[i + 2] = -x * s + z * c
+
+
+def centre_scene(scene: Scene) -> None:
+    """Put the building's centre on the origin, ground at y = 0."""
+    b = scene.bounds()
+    if not b:
+        return
+    dx = -(b[0] + b[3]) / 2
+    dz = -(b[2] + b[5]) / 2
+    for m in scene.meshes:
+        for i in range(0, len(m.positions), 3):
+            m.positions[i] += dx
+            m.positions[i + 2] += dz

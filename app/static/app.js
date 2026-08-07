@@ -441,6 +441,7 @@ function renderHeights() {
     num(p, 'parapet_ft', 'Parapet height (ft)'),
     num(p, 'railing_ft', 'Railing height (ft)', 'balcony and stairwell guards'),
     el('div', { class: 'field' }, el('span', {}, 'Roof'), roofSel),
+    num(p, 'roof_slab_thickness_ft', 'Roof slab (ft)', 'blank → the top storey’s slab'),
     chk('columns', 'Model the columns'),
     chk('glazing', 'Glazing in the windows'),
     chk('doors', 'Door leaves'),

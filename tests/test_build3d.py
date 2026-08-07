@@ -265,6 +265,43 @@ def test_parapet_follows_a_stepped_outline_all_the_way_round():
     assert any(abs(r[2] - 9.0) < 1e-6 for r in verticals)
 
 
+def test_roof_slab_takes_the_roof_material_and_its_own_thickness():
+    """The finish catalog has offered a roof surface since the finish system
+    landed, but the roof slab never asked for it — so it wore the floor-slab
+    material and picking a roof colour changed nothing you could see."""
+    params = BuildParams(
+        plinth_ft=0.0,
+        roof="flat_parapet",
+        roof_slab_thickness_ft=8 / 12,
+        ground=False,
+        columns=False,
+        align_north=False,
+        levels=[
+            LevelParams(
+                level=0,
+                name="Ground floor",
+                floor_to_floor_ft=10.0,
+                slab_thickness_ft=5 / 12,
+            )
+        ],
+    )
+    ex = PlanExtract(
+        sheet_id="s",
+        level=0,
+        level_name="Ground floor",
+        scale=ScaleInfo(px_per_ft=10.0, method="manual"),
+        origin_px=(0.0, 0.0),
+        bounds=(0.0, 0.0, 20.0, 30.0),
+        walls=_box_of_walls(),
+    )
+    result = build([ex], params)
+    roof = next(m for m in result.scene.meshes if m.name == "Roof slab")
+    assert roof.material == "roof"
+    # and it is 8", the thickness asked for, not the storey's 5"
+    b = roof.bounds()
+    assert (b[4] - b[1]) == pytest.approx(8 / 12 * FT_TO_M, abs=1e-4)
+
+
 def test_railings_are_built_at_railing_height():
     walls = _box_of_walls()
     walls.append(
@@ -327,6 +364,26 @@ def test_mark_exterior():
     mark_exterior(walls)
     assert all(w.exterior for w in walls[:4])
     assert not walls[4].exterior
+
+
+def test_mark_exterior_records_which_face_looks_out():
+    """Knowing a wall is external is not enough to hang anything on it.
+
+    On this box the north and west walls face out across their x0/y0 side and
+    the south and east walls across their x1/y1 side; the spine wall faces in
+    on both. A sunshade, a reveal or an IFC material layer needs that
+    distinction, which ``exterior`` alone throws away.
+    """
+    walls = _box_of_walls()
+    walls.append(Wall(id="mid", axis="h", x0=1, y0=14, x1=19, y1=14.4))
+    mark_exterior(walls)
+    assert {w.id: w.outside for w in walls} == {
+        "n": "lo",
+        "s": "hi",
+        "w": "lo",
+        "e": "hi",
+        "mid": None,
+    }
 
 
 def test_enclosed_mask_has_free_space_around_it():

@@ -59,6 +59,11 @@ class Wall(BaseModel):
     kind: Literal["wall", "railing"] = "wall"
     height_ft: float | None = None  # None → the storey's wall height
     exterior: bool = False
+    # *Which* face looks out: "lo" is the x0/y0 face, "hi" the x1/y1 face, and
+    # "both" is a free-standing wall with weather on either side. Knowing the
+    # side rather than merely the fact is what lets a sunshade sit outside, a
+    # window reveal cut inwards, and an IFC material layer set face the right way.
+    outside: Literal["lo", "hi", "both"] | None = None
     openings: list[Opening] = Field(default_factory=list)
 
     @property
@@ -201,6 +206,9 @@ class BuildParams(BaseModel):
     parapet_thickness_ft: float = 5.0 / 12.0
     railing_ft: float = 3.5  # balcony and stairwell guards
     roof: Literal["flat_parapet", "flat", "none"] = "flat_parapet"
+    # None → the top storey's slab thickness, which is what a roof slab was
+    # silently borrowing before it could be asked about separately
+    roof_slab_thickness_ft: float | None = None
     levels: list[LevelParams] = Field(default_factory=list)
     columns: bool = True
     glazing: bool = True

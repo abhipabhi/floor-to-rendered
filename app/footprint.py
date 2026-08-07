@@ -229,7 +229,12 @@ def mark_exterior(
     seal_ft: float = SEAL_FT,
     columns: list[Column] | None = None,
 ) -> None:
-    """Set ``wall.exterior`` from which side of the outline each wall faces."""
+    """Set ``wall.exterior`` and ``wall.outside`` from the outline.
+
+    Both faces are probed. ``exterior`` says whether either one sees weather;
+    ``outside`` says *which*, because everything that hangs on a facade — a
+    sunshade, a reveal, a per-face material — needs the side, not the fact.
+    """
     raster = wall_raster(walls, cell_ft, seal_ft, columns)
     if raster is None:
         return
@@ -244,8 +249,6 @@ def mark_exterior(
         return not inside[r, c]
 
     for w in walls:
-        cx = (w.x0 + w.x1) / 2
-        cy = (w.y0 + w.y1) / 2
         if w.axis == "h":
             samples = [(u, w.y0 - probe) for u in _thirds(w.x0, w.x1)] + [
                 (u, w.y1 + probe) for u in _thirds(w.x0, w.x1)
@@ -262,8 +265,11 @@ def mark_exterior(
                 any(outside_at(x, y) for x, y in samples[:3]),
                 any(outside_at(x, y) for x, y in samples[3:]),
             ]
-        del cx, cy
-        w.exterior = any(sides)
+        lo_out, hi_out = sides
+        w.exterior = lo_out or hi_out
+        w.outside = (
+            "both" if lo_out and hi_out else "lo" if lo_out else "hi" if hi_out else None
+        )
 
 
 def _thirds(a: float, b: float) -> list[float]:

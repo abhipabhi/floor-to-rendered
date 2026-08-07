@@ -27,7 +27,7 @@ from .footprint import mark_exterior
 from .geom import Band, Raster, Run
 from .models import Column, Opening, PlanExtract, Room, ScaleInfo, Wall
 from .pdfvec import Fill, Sheet, Word
-from .units import parse_room_dim
+from .units import Units, detect_units, find_room_dim, parse_room_dim
 
 # --------------------------------------------------------------------------- #
 # tuning — all in feet unless the name says px
@@ -85,7 +85,9 @@ class Diagnostics:
 # --------------------------------------------------------------------------- #
 # text clustering
 # --------------------------------------------------------------------------- #
-def cluster_words(words: list[Word], gap: float = 4.0) -> list[LabelBlock]:
+def cluster_words(
+    words: list[Word], gap: float = 4.0, units: Units = "imperial"
+) -> list[LabelBlock]:
     """Group text tokens whose boxes nearly touch into one label block."""
     items = [w for w in words if w.text.strip()]
     n = len(items)
@@ -121,11 +123,18 @@ def cluster_words(words: list[Word], gap: float = 4.0) -> list[LabelBlock]:
         dim = None
         names: list[str] = []
         for w in ws:
-            rd = parse_room_dim(w.text)
+            rd = parse_room_dim(w.text, units)
             if rd and dim is None:
                 dim = (rd.a, rd.b)
-            elif w.text.isalpha():
+            elif w.text.isalpha() and w.text.upper() != "X":
+                # the X of "4.00 x 4.20" is a separator, not part of the name
                 names.append(w.text.upper())
+        if dim is None:
+            # a metric sheet writes "4.00 x 4.20", which arrives as three
+            # separate words — the dimension only exists across the whole block
+            rd = find_room_dim(" ".join(w.text for w in ws), units)
+            if rd:
+                dim = (rd.a, rd.b)
         blocks.append(
             LabelBlock(
                 words=ws,
@@ -767,7 +776,13 @@ def extract_plan(
 ) -> PlanExtract:
     """Read one floor-plan sheet into plan-space geometry."""
     diag = Diagnostics()
-    blocks = cluster_words(sheet.words)
+    # Which system the sheet prints in decides how its room labels read. Getting
+    # it wrong scales the building by 3.28, so it is detected from the sheet's
+    # own marks and reported, never assumed.
+    unit_system = detect_units(sheet.text)
+    if unit_system.metric:
+        diag.add(f"metric drawing — {unit_system.evidence}")
+    blocks = cluster_words(sheet.words, units=unit_system.units)
     cols_px = column_fills(sheet)
     region = building_region(sheet, room_labels(blocks), cols_px, diag)
     cols_px = [c for c in cols_px if _in_region(c.cx, c.cy, region)]
@@ -815,7 +830,7 @@ def extract_plan(
             scale = calibrate_from_thickness(modal_spacing(runs_h + runs_v), diag)
 
     px = scale.px_per_ft
-    _check_round_thicknesses(sig, px, scale, diag)
+    _check_round_thicknesses(sig, px, scale, diag, unit_system.units)
 
     # -- pass B: the real extraction, with wall sizes in real units
     bands = find_bands(
@@ -843,8 +858,11 @@ def extract_plan(
         oy = min(c.y0 for c in cols_px)
         diag.add("plan origin on the column grid")
     elif walls_px:
-        ox = min(min(w.rect()[0], w.rect()[2]) for w in walls_px)
-        oy = min(min(w.rect()[1], w.rect()[3]) for w in walls_px)
+        # walls_px is (band, openings) pairs — this branch only runs on a plan
+        # with fewer than three columns, which the example set never is
+        rects = [b.rect() for b, _ in walls_px]
+        ox = min(min(r[0], r[2]) for r in rects)
+        oy = min(min(r[1], r[3]) for r in rects)
         diag.add("plan origin on the wall envelope")
     else:
         ox, oy = region[0], region[1]
@@ -960,21 +978,31 @@ def extract_plan(
 # helpers used by extract_plan
 # --------------------------------------------------------------------------- #
 def _check_round_thicknesses(
-    sig: list[float], px: float, scale: ScaleInfo, diag: Diagnostics
+    sig: list[float], px: float, scale: ScaleInfo, diag: Diagnostics,
+    units: Units = "imperial",
 ) -> None:
-    """Cross-check the scale: real wall thicknesses are whole inches.
+    """Cross-check the scale: real walls are built to round sizes.
 
-    If the calibrated scale turns every wall spacing on the sheet into a round
-    number of inches, that is independent evidence the scale is right — and if
-    it does not, the user should be told before anything is exported.
+    If the calibrated scale turns every wall spacing on the sheet into a whole
+    number of inches — or of centimetres on a metric drawing — that is
+    independent evidence the scale is right, and if it does not, the user
+    should be told before anything is exported. A metric wall is 115 or 230mm,
+    never 4.53", so the check has to be made in the units the wall was built in.
     """
     if not sig:
         return
-    inches = [s / px * 12 for s in sig]
-    off = [abs(v - round(v)) for v in inches]
-    reading = ", ".join(f'{v:.1f}"' for v in inches)
-    if max(off) <= 0.35:
-        diag.add(f"wall thicknesses come out as {reading} — round inches confirm the scale")
+    if units == "metric":
+        sizes = [s / px * 0.3048 * 1000 for s in sig]  # millimetres
+        off = [abs(v / 10 - round(v / 10)) for v in sizes]  # round centimetres
+        reading = ", ".join(f"{v:.0f}mm" for v in sizes)
+        what, tol = "round centimetres", 0.35
+    else:
+        sizes = [s / px * 12 for s in sig]
+        off = [abs(v - round(v)) for v in sizes]
+        reading = ", ".join(f'{v:.1f}"' for v in sizes)
+        what, tol = "round inches", 0.35
+    if max(off) <= tol:
+        diag.add(f"wall thicknesses come out as {reading} — {what} confirm the scale")
         if scale.confidence == "medium" and scale.method == "room_labels":
             scale.confidence = "high"
     else:

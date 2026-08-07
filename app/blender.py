@@ -61,41 +61,108 @@ def sun_vector(elevation_deg, bearing_deg):
 
 
 def aim(obj, direction):
-    """Point an object's -Z down a direction vector."""
-    obj.rotation_euler = mathutils.Vector((0.0, 0.0, -1.0)).rotation_difference(
-        direction.normalized()
-    ).to_euler()
+    """Point an object's -Z down a direction vector, keeping its head up.
+
+    ``to_track_quat`` is the part that matters: the obvious
+    ``rotation_difference`` gives the *shortest* rotation onto the direction,
+    which says nothing about roll, so every camera comes out banked and the
+    horizon runs diagonally across the render.
+    """
+    obj.rotation_euler = direction.normalized().to_track_quat("-Z", "Y").to_euler()
+
+
+def _set_any(node, attr, values):
+    """Set an enum to the first value this Blender actually accepts."""
+    for value in values:
+        try:
+            setattr(node, attr, value)
+            return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _set_soft(node, attr, value):
+    """Set an attribute if this Blender has it, and shrug if it does not."""
+    try:
+        setattr(node, attr, value)
+    except (AttributeError, TypeError, ValueError):
+        pass
 
 
 def build_sky(scene):
     """A physical sky, used for both the background and the bounce light.
 
-    Nishita gives a real horizon and a sun disc, so the model is lit by
-    something with a direction and a colour rather than flat grey.
+    A real horizon and sun disc means the model is lit by something with a
+    direction and a colour instead of flat grey.
+
+    Every property here is set defensively and *separately*. Blender renames
+    these between versions — the physical sky model has been both NISHITA and
+    MULTIPLE_SCATTERING — and the trap is wrapping the whole block in one
+    try/except: the sky node gets created, one renamed property raises, and the
+    node is left sitting in the tree unlinked. The result is a scene that looks
+    like it has a sky and renders a flat grey background.
     """
     world = bpy.data.worlds.get("World") or bpy.data.worlds.new("World")
     scene.world = world
-    world.use_nodes = True
+    # Only reach for use_nodes if there is genuinely no tree — from Blender 5 on
+    # worlds always have one and setting the flag is deprecated
+    if getattr(world, "node_tree", None) is None:
+        _set_soft(world, "use_nodes", True)
     tree = world.node_tree
     for node in list(tree.nodes):
         tree.nodes.remove(node)
     out = tree.nodes.new("ShaderNodeOutputWorld")
     bg = tree.nodes.new("ShaderNodeBackground")
-    bg.inputs["Strength"].default_value = 0.85
+    # Deliberately low. The sky is doing ambient fill only; the Sun lamp is the
+    # key light. Turn this up and the fill drowns the sun — at 0.9 the model
+    # renders with no cast shadows at all, which reads as a bug but is just the
+    # two light sources fighting. Raise it for an overcast look, and expect the
+    # shadows to go with it.
+    bg.inputs["Strength"].default_value = 0.22
+    out.location, bg.location = (300, 0), (100, 0)
+    tree.links.new(bg.outputs[0], out.inputs["Surface"])
+
     try:
         sky = tree.nodes.new("ShaderNodeTexSky")
-        sky.sky_type = "NISHITA"
-        sky.sun_elevation = math.radians(SUN_ELEVATION_DEG)
-        # Blender measures sky rotation from +X; the bearing is from +Y (north)
-        sky.sun_rotation = math.radians(90.0 - SUN_BEARING_DEG)
-        sky.sun_intensity = 0.6
-        sky.altitude = 20.0
-        tree.links.new(sky.outputs[0], bg.inputs["Color"])
-    except Exception:  # older Blender, or no Nishita — a plain sky still works
+    except Exception:
+        sky = None
+    if sky is None:
         bg.inputs["Color"].default_value = (0.42, 0.58, 0.82, 1.0)
-    tree.links.new(bg.outputs[0], out.inputs["Surface"])
-    out.location = (300, 0)
-    bg.location = (100, 0)
+        return
+
+    sky.location = (-120, 0)
+    _set_any(sky, "sky_type", ("MULTIPLE_SCATTERING", "NISHITA", "PREETHAM"))
+    _set_soft(sky, "sun_elevation", math.radians(SUN_ELEVATION_DEG))
+    # Blender measures sky rotation from +X; the bearing is from +Y (north)
+    _set_soft(sky, "sun_rotation", math.radians(90.0 - SUN_BEARING_DEG))
+    # no disc in the sky texture: the Sun lamp already provides it, and having
+    # both double-counts the key light and washes the shadows out
+    _set_soft(sky, "sun_intensity", 0.0)
+    _set_soft(sky, "altitude", 20.0)
+    tree.links.new(sky.outputs[0], bg.inputs["Color"])
+
+
+def add_backdrop(size, ground_z):
+    """A wide ground plane for the model to sit on.
+
+    The exported site stops at the plot boundary, so without this the camera
+    looks past it straight into the sky's below-horizon region, which every
+    physical sky model renders near-black. The building ends up floating at
+    dusk. This is scene dressing, not part of the model — delete it freely.
+    """
+    bpy.ops.mesh.primitive_plane_add(size=max(400.0, size * 30), location=(0, 0, ground_z))
+    plane = bpy.context.object
+    plane.name = "Backdrop ground"
+    mat = bpy.data.materials.new("Backdrop")
+    if getattr(mat, "node_tree", None) is None:
+        _set_soft(mat, "use_nodes", True)
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = (0.26, 0.29, 0.22, 1.0)
+        _set_soft(bsdf.inputs["Roughness"], "default_value", 1.0)
+    plane.data.materials.append(mat)
+    return plane
 
 
 def collect(objects):
@@ -112,7 +179,9 @@ def collect(objects):
 
     for obj in objects:
         target = "Shell"
-        if obj.name.startswith("Site"):
+        if obj.name.startswith("Backdrop"):
+            target = "Site"
+        elif obj.name.startswith("Site"):
             target = "Site"
         else:
             for storey in STOREYS:
@@ -123,6 +192,17 @@ def collect(objects):
         for old in list(obj.users_collection):
             old.objects.unlink(obj)
         col.objects.link(obj)
+
+    # Whatever is left in the startup collection is the sun and the cameras,
+    # so give it a name that says so rather than leaving a stray "Collection"
+    for child in list(scene_col.children):
+        if child.name in made:
+            continue
+        if not child.objects and not child.children:
+            scene_col.children.unlink(child)
+            bpy.data.collections.remove(child)
+        elif child.name.startswith("Collection"):
+            child.name = "Lighting & cameras"
     return made
 
 
@@ -173,35 +253,25 @@ def main():
     bpy.ops.object.light_add(type="SUN", location=centre + towards_sun * size * 2.2)
     sun = bpy.context.object
     sun.name = "Sun"
-    sun.data.energy = 3.2
+    sun.data.energy = 5.0
     sun.data.angle = math.radians(0.9)   # a crisp but not razor-edged shadow
     aim(sun, -towards_sun)
 
     build_sky(scene)
+    backdrop = add_backdrop(size, min(zs))
     scene.camera = add_cameras(size, zmax, centre)
-    collect(imported)
+    collect(imported + [backdrop])
 
     # Render settings worth having set before the first F12
     scene.render.resolution_x = 1920
     scene.render.resolution_y = 1080
     scene.render.film_transparent = False
-    for engine in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
-        try:
-            scene.render.engine = engine
-            break
-        except TypeError:
-            continue
-    for look in ("AgX", "Filmic"):
-        try:
-            scene.view_settings.view_transform = look
-            break
-        except TypeError:
-            continue
-    try:
-        scene.eevee.use_shadows = True
-        scene.eevee.use_raytracing = True
-    except AttributeError:
-        pass
+    _set_any(scene.render, "engine", ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"))
+    _set_any(scene.view_settings, "view_transform", ("AgX", "Filmic"))
+    if getattr(scene, "eevee", None) is not None:
+        _set_soft(scene.eevee, "use_shadows", True)
+        _set_soft(scene.eevee, "use_raytracing", True)
+        _set_soft(scene.eevee, "taa_render_samples", 96)
 
     for area in bpy.context.screen.areas if bpy.context.screen else []:
         if area.type == "VIEW_3D":

@@ -401,6 +401,47 @@ function drawStats() {
 }
 
 // ─────────────────────────────────────────────────────────── 4 · heights
+// Where a number came from, shown as a pill beside its label. The server is
+// what decides this — it diffs what the page sends against what it stored —
+// so the page only ever displays the answer, never works it out.
+const SRC = {
+  measured: ['measured', 'read off a sheet in this set'],
+  derived: ['derived', 'worked out from a schedule or a note'],
+  user: ['yours', 'you typed this; no reading will overwrite it'],
+  default: ['assumed', 'the tool’s default — nothing in the drawings says this'],
+};
+
+function provAt(path) {
+  const p = S.job && S.job.params;
+  if (!p) return null;
+  const parts = path.split('.');
+  if (parts[0] === 'building') return (p.provenance || {})[parts[1]];
+  const lp = (p.levels || []).find(l => String(l.level) === parts[1]);
+  return lp ? (lp.provenance || {})[parts[2]] : null;
+}
+
+function fillProv(field) {
+  const host = field.querySelector('.badge-host');
+  const alts = field.querySelector('.alts');
+  if (host) host.textContent = '';
+  if (alts) alts.textContent = '';
+  const q = provAt(field.dataset.prov);
+  if (!q) return;
+  const [text, why] = SRC[q.source] || [q.source, ''];
+  const tip = [why, q.method && `method: ${q.method}`, q.evidence,
+    q.sheet_id && `sheet: ${q.sheet_id}`].filter(Boolean).join('\n');
+  if (host) host.append(el('span', { class: `badge src src-${q.source}`, title: tip }, text));
+  // a disagreement between two sheets is worth reading, so it gets its own line
+  if (alts && q.alternatives && q.alternatives.length)
+    alts.textContent = `also read ${q.alternatives.join('; ')}`;
+}
+
+// A save can change a number's story — one you typed becomes yours. Repaint
+// only the pills, so a re-render never steals focus from a field being edited.
+function refreshHeightBadges() {
+  document.querySelectorAll('#heightsform .field[data-prov]').forEach(fillProv);
+}
+
 function renderHeights() {
   const f = $('#heightsform'); f.textContent = '';
   if (!S.job) return;
@@ -413,7 +454,15 @@ function renderHeights() {
       value: typeof v === 'number' ? String(Math.round(v * 1000) / 1000) : (v ?? '')
     });
     i.addEventListener('change', () => { obj[key] = +i.value; saveParams(); });
-    return el('div', { class: 'field' }, el('span', {}, label, hint ? el('div', { class: 'ev' }, hint) : ''), i);
+    const host = el('span', { class: 'badge-host' });
+    const alts = el('div', { class: 'ev alts' });
+    const field = el('div', { class: 'field' },
+      el('span', {}, label, ' ', host,
+        hint ? el('div', { class: 'ev' }, hint) : '', alts),
+      i);
+    field.dataset.prov = obj === p ? `building.${key}` : `level.${obj.level}.${key}`;
+    fillProv(field);
+    return field;
   };
 
   for (const lp of p.levels) {
@@ -457,6 +506,7 @@ function saveParams() {
     try {
       const res = await jput(`/api/jobs/${S.job.id}/params`, S.job.params);
       S.job = res.job; S.job.build = null;
+      refreshHeightBadges();
     } catch (e) { alert(e.message); }
   }, 250);
 }

@@ -14,6 +14,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 
+from . import datum
 from .errors import AppError, not_found
 from .models import JobState
 from .pdfvec import Sheet, load_sheet
@@ -83,7 +84,12 @@ def load_state(job_id: str) -> JobState:
     if not os.path.exists(p):
         raise not_found("job")
     with open(p) as fh:
-        return JobState.model_validate(json.load(fh))
+        state = JobState.model_validate(json.load(fh))
+    # A job saved before heights carried their provenance has none on disk.
+    # Seeding on load rather than on migration means those jobs simply start
+    # saying "assumed", which is what they always were.
+    datum.seed_defaults(state.params)
+    return state
 
 
 def list_jobs() -> list[dict]:

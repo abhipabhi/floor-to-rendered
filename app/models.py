@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .datum import Quantity
 from .units import FT_TO_M
 
 Axis = Literal["h", "v"]
@@ -147,7 +148,13 @@ class SheetInfo(BaseModel):
 
 
 class LevelParams(BaseModel):
-    """Vertical parameters for one storey. A plan carries none of this."""
+    """Vertical parameters for one storey.
+
+    A *plan* carries none of this, but a drawing *set* may: a section states a
+    slab, an elevation states a floor level. So each number keeps a
+    :class:`~app.datum.Quantity` saying where it came from, and ``user_set``
+    lists the ones you typed, which no later reading is allowed to overwrite.
+    """
 
     level: int
     name: str
@@ -157,7 +164,10 @@ class LevelParams(BaseModel):
     window_head_ft: float = 7.0
     door_head_ft: float = 7.0
     slab_thickness_ft: float = 5.0 / 12.0
+    ffl_ft: float | None = None  # finished floor level above datum, once measured
     include: bool = True
+    provenance: dict[str, Quantity] = Field(default_factory=dict)
+    user_set: list[str] = Field(default_factory=list)
 
 
 class FinishParams(BaseModel):
@@ -209,6 +219,11 @@ class BuildParams(BaseModel):
     # None → the top storey's slab thickness, which is what a roof slab was
     # silently borrowing before it could be asked about separately
     roof_slab_thickness_ft: float | None = None
+    # Facts the structural sheets state outright. None until a reader finds one,
+    # so they are absent rather than invented when the set does not include them.
+    plinth_beam_depth_ft: float | None = None
+    slab_projection_ft: float | None = None
+    excavation_depth_ft: float | None = None
     levels: list[LevelParams] = Field(default_factory=list)
     columns: bool = True
     glazing: bool = True
@@ -219,6 +234,8 @@ class BuildParams(BaseModel):
     units: Literal["m", "ft"] = "m"
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
+    provenance: dict[str, Quantity] = Field(default_factory=dict)
+    user_set: list[str] = Field(default_factory=list)
 
     def level(self, idx: int) -> LevelParams | None:
         for lp in self.levels:

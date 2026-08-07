@@ -195,6 +195,15 @@ svg .calline { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; }
 .badge.low { background: var(--err-bg); color: var(--err); }
 @media (prefers-color-scheme: dark) { .badge.high { background: #16311f; } }
 
+/* where a number came from — the same pill, keyed by source not confidence */
+.badge.src { font-size: 10.5px; padding: 1px 6px; }
+.badge.src-measured { background: #d8f0e2; color: var(--ok); }
+.badge.src-derived { background: var(--warn-bg); color: var(--warn); }
+.badge.src-user { background: var(--accent-soft); color: var(--accent); }
+.badge.src-default { background: var(--bg); color: var(--muted);
+                     box-shadow: inset 0 0 0 1px var(--line); }
+@media (prefers-color-scheme: dark) { .badge.src-measured { background: #16311f; } }
+
 /* heights */
 .lvl-card { background: var(--panel); border: 1px solid var(--line);
             border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }

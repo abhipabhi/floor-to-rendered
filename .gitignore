@@ -10,3 +10,8 @@ build/
 # and the designer's phone number in the title block, so they are not published.
 # Everything that needs them skips cleanly without them (see tests/conftest.py).
 example/
+
+# Reference images collected for design inspiration. They are other people's
+# marketing material — studio watermarks, a designer's name — so they stay out
+# of a public repository. Nothing in the code depends on them.
+Extra examples/

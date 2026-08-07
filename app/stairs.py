@@ -111,20 +111,57 @@ def _ladders(rungs: list[Band], tol: float) -> list[Ladder]:
     return out
 
 
-def _up_dir(rect: tuple[float, float, float, float], axis: str, marker) -> str:
-    """Which way the flight climbs, from the UP marker's position along it.
+def _ends(f: Flight) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The two ends of a flight, along the direction it is climbed."""
+    cx, cy = (f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2
+    if f.axis == "v":  # treads run in y, so the climb is along x
+        return (f.x0, cy), (f.x1, cy)
+    return (cx, f.y0), (cx, f.y1)
 
-    The marker sits at the foot of the flight, so the direction of travel is
-    away from it. Treads that run in y are climbed along x, and vice versa.
+
+def _orient(group: list[Flight], marker: tuple[float, float] | None) -> list[Flight]:
+    """Put the flights in climbing order and point each one the right way.
+
+    A dogleg turns back on itself, so the flights do not share a direction and
+    the UP marker only tells you where the *first* one starts. Applying that one
+    marker to every flight sends the last flight back down the way it came.
+    Instead each flight is entered at whichever end is nearest where the
+    previous one finished, which is what a landing is.
     """
-    x0, y0, x1, y1 = rect
-    if axis == "v":  # treads run in y, so the climb is in x
-        if marker is None:
-            return "+x"
-        return "+x" if marker[0] <= (x0 + x1) / 2 else "-x"
-    if marker is None:
-        return "+y"
-    return "+y" if marker[1] <= (y0 + y1) / 2 else "-y"
+    if not group:
+        return group
+    remaining = list(group)
+    first = (
+        min(remaining, key=lambda f: min(
+            (p[0] - marker[0]) ** 2 + (p[1] - marker[1]) ** 2 for p in _ends(f)))
+        if marker else min(remaining, key=lambda f: (f.y0, f.x0))
+    )
+    ordered = [first]
+    remaining.remove(first)
+    while remaining:
+        last = ordered[-1]
+        nxt = min(remaining, key=lambda f: max(
+            max(last.x0 - f.x1, f.x0 - last.x1),
+            max(last.y0 - f.y1, f.y0 - last.y1),
+        ))
+        ordered.append(nxt)
+        remaining.remove(nxt)
+
+    here = marker
+    for f in ordered:
+        lo, hi = _ends(f)
+        if here is None:
+            entry, exit_ = lo, hi
+        else:
+            d_lo = (lo[0] - here[0]) ** 2 + (lo[1] - here[1]) ** 2
+            d_hi = (hi[0] - here[0]) ** 2 + (hi[1] - here[1]) ** 2
+            entry, exit_ = (lo, hi) if d_lo <= d_hi else (hi, lo)
+        if f.axis == "v":
+            f.up = "+x" if exit_[0] > entry[0] else "-x"
+        else:
+            f.up = "+y" if exit_[1] > entry[1] else "-y"
+        here = exit_
+    return ordered
 
 
 def _well(
@@ -253,7 +290,6 @@ def find_stairs(
                 treads=len(lad.rungs),
                 going_ft=round(going, 4),
                 width_ft=round(width, 4),
-                up=_up_dir(rect, lad.axis, (climb[0], climb[1]) if climb else None),
             ),
             (climb[0], climb[1]) if climb else None,
         ))
@@ -262,10 +298,11 @@ def find_stairs(
         return []
 
     # flights that touch belong to one stair, joined at their landings
+    climb_at = next((m for m in markers if m[2] == "UP"), None)
     groups = _chain([f for f, _ in flights])
     out: list[Stair] = []
     for i, group in enumerate(groups):
-        group.sort(key=lambda f: (f.y0, f.x0))
+        group = _orient(group, (climb_at[0], climb_at[1]) if climb_at else None)
         well = _well(group, markers)
         out.append(
             Stair(

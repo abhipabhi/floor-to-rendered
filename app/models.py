@@ -202,7 +202,7 @@ class LevelParams(BaseModel):
 class FinishParams(BaseModel):
     """What the building is made of. Not in any drawing — entirely your choice."""
 
-    preset: str = "plaster_stone"
+    preset: str = "contemporary"
     # slot → [colour, texture]; anything absent falls back to the preset
     slots: dict[str, list[str | None]] = Field(default_factory=dict)
 
@@ -217,6 +217,31 @@ class FinishParams(BaseModel):
             texture = value[1] if len(value) > 1 else out[key][1]
             out[key] = (color, texture)
         return out
+
+
+class DetailParams(BaseModel):
+    """The relief on the facade.
+
+    A plain extrusion of a floor plan is a box with holes in it, and good
+    lighting has nothing to catch on it. What makes an elevation read as a
+    building is the small stuff that projects: a reveal around every opening, a
+    sill, a sunshade, a band at each floor. None of it is in a plan, so all of
+    it is a choice — but the defaults are the ones this kind of house is
+    actually built with.
+    """
+
+    enabled: bool = True
+    reveal_ft: float = 0.25  # how far the glass sits back from the outer face
+    frames: bool = True
+    frame_ft: float = 0.22  # width of the frame around an opening
+    sills: bool = True
+    sill_projection_ft: float = 0.25
+    chajjas: bool = True  # the sunshade over a window or door
+    chajja_ft: float | None = None  # None → the projection measured off the set
+    floor_bands: bool = True
+    band_projection_ft: float = 0.17
+    coping: bool = True  # the cap course on top of the parapet
+    balustrades: bool = True  # railings as glass and rail, not a solid slab
 
 
 class SiteParams(BaseModel):
@@ -263,6 +288,7 @@ class BuildParams(BaseModel):
     units: Literal["m", "ft"] = "m"
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
+    detail: DetailParams = Field(default_factory=DetailParams)
     provenance: dict[str, Quantity] = Field(default_factory=dict)
     user_set: list[str] = Field(default_factory=list)
 

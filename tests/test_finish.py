@@ -286,3 +286,44 @@ def test_a_finish_change_does_not_move_a_single_vertex():
     for ma, mb in zip(a.scene.meshes, b.scene.meshes):
         assert ma.name == mb.name
         assert ma.positions == pytest.approx(mb.positions)
+
+
+def _luma(rgb) -> float:
+    r, g, b = rgb
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+@pytest.mark.parametrize("preset", list(PRESETS))
+def test_trim_is_always_distinguishable_from_the_wall_behind_it(preset):
+    """Every projecting thing on the facade is `trim`.
+
+    The bands, sills, sunshades and coping are the only relief a punched-hole
+    facade has, and they are all read against `wall_ext`. Give the two slots
+    the same value and every one of them disappears — the model goes back to
+    being a flat box, and no amount of lighting recovers it.
+
+    The threshold is calibrated against a real mistake rather than picked to
+    pass: a first cut at the contemporary preset paired ``#F2F0EC`` with
+    ``#E8E5E0``, which separate by 0.087 and rendered every projection
+    invisible. The shipped presets all clear 0.21, so 0.15 rejects that and
+    leaves genuine choices alone.
+    """
+    from app.finish import hex_to_rgb, preset_slots
+
+    slots = preset_slots(preset)
+    wall = hex_to_rgb(slots["wall_ext"][0])
+    trim = hex_to_rgb(slots["trim"][0])
+    assert abs(_luma(wall) - _luma(trim)) > 0.15, (
+        f"{preset}: trim and wall_ext are too close for any relief to show"
+    )
+
+
+@pytest.mark.parametrize("preset", list(PRESETS))
+def test_frames_read_against_their_glass(preset):
+    """A window frame the colour of the glass is not a frame."""
+    from app.finish import hex_to_rgb, preset_slots
+
+    slots = preset_slots(preset)
+    assert abs(
+        _luma(hex_to_rgb(slots["frame"][0])) - _luma(hex_to_rgb(slots["glazing"][0]))
+    ) > 0.05, f"{preset}: the frame vanishes into the glazing"

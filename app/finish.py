@@ -22,6 +22,7 @@ SLOTS = [
     ("slab", "Floor slabs and soffits"),
     ("column", "Exposed columns"),
     ("stair", "Stairs"),
+    ("frame", "Window and door frames"),
     ("door", "Doors"),
     ("glazing", "Glazing"),
     ("railing", "Railings"),
@@ -88,6 +89,57 @@ def hex_to_rgb(value: str) -> tuple[float, float, float]:
 # presets
 # --------------------------------------------------------------------------- #
 PRESETS: dict[str, dict] = {
+    # The two below are drawn from contemporary Indian residential elevations:
+    # a pale render carrying the mass, a darker base grounding it, timber or
+    # stone as one warm accent, and dark slim joinery. What makes them read is
+    # the *contrast between slots* — a facade in a single colour stays flat
+    # however good the light is.
+    "contemporary": {
+        "label": "Contemporary",
+        "note": "White render, charcoal joinery, stone base and timber doors.",
+        "slots": {
+            # trim carries every projecting thing — bands, sills, chajjas,
+            # coping — so it has to sit clearly apart from the wall behind it.
+            # Matched to the wall, all that relief goes invisible and the
+            # facade is flat again however much of it was built.
+            "wall_ext": ("#E7E0D5", "plaster"),
+            "wall_int": ("#F7F4EF", "plaster"),
+            "base": ("#5F5A55", "stone"),
+            "trim": ("#FCFBF9", "concrete"),
+            "roof": ("#B4AFA7", "screed"),
+            "slab": ("#D3CFC8", "concrete"),
+            "stair": ("#C8C3BB", "concrete"),
+            "column": ("#FCFBF9", "plaster"),
+            "door": ("#7A5230", "wood"),
+            "frame": ("#33373B", None),
+            "glazing": ("#8FB6CC", None),
+            "railing": ("#3A3E42", None),
+            "ground": ("#FFFFFF", "grass"),
+            "drive": ("#FFFFFF", "paving"),
+            "boundary": ("#E4E1DC", "plaster"),
+        },
+    },
+    "tropical": {
+        "label": "Tropical modern",
+        "note": "Warm off-white with timber screens, exposed concrete bands.",
+        "slots": {
+            "wall_ext": ("#EDE8DE", "plaster"),
+            "wall_int": ("#F7F3EB", "plaster"),
+            "base": ("#8A8378", "stone"),
+            "trim": ("#B9B3A7", "concrete"),
+            "roof": ("#A9A398", "screed"),
+            "slab": ("#C9C3B7", "concrete"),
+            "stair": ("#BDB7AB", "concrete"),
+            "column": ("#9E978B", "concrete"),
+            "door": ("#8A5A2B", "wood"),
+            "frame": ("#4A3B2A", "wood"),
+            "glazing": ("#9DC0D2", None),
+            "railing": ("#5C4A34", None),
+            "ground": ("#FFFFFF", "grass"),
+            "drive": ("#FFFFFF", "paving"),
+            "boundary": ("#DED8CC", "plaster"),
+        },
+    },
     "plaster_stone": {
         "label": "Plaster & stone",
         "note": "Warm render with a stone base and timber doors.",
@@ -101,6 +153,7 @@ PRESETS: dict[str, dict] = {
             "stair": ("#D6D2CA", "concrete"),
             "column": ("#9A9894", "concrete"),
             "door": ("#FFFFFF", "wood"),
+            "frame": ("#5A5550", None),
             "glazing": ("#9FC4D6", None),
             "railing": ("#B7C3CB", None),
             "ground": ("#FFFFFF", "grass"),
@@ -121,6 +174,7 @@ PRESETS: dict[str, dict] = {
             "stair": ("#CDC9C1", "concrete"),
             "column": ("#C9C5BD", "concrete"),
             "door": ("#6E4A2C", "wood"),
+            "frame": ("#3B3733", None),
             "glazing": ("#93B9CC", None),
             "railing": ("#4A4E52", None),
             "ground": ("#FFFFFF", "grass"),
@@ -141,6 +195,7 @@ PRESETS: dict[str, dict] = {
             "stair": ("#D8D5D0", "concrete"),
             "column": ("#5E6166", "concrete"),
             "door": ("#3A3E42", "wood"),
+            "frame": ("#2E3236", None),
             "glazing": ("#A8CBDC", None),
             "railing": ("#9FB0BA", None),
             "ground": ("#FFFFFF", "grass"),
@@ -161,6 +216,7 @@ PRESETS: dict[str, dict] = {
             "stair": ("#D2C5AA", "concrete"),
             "column": ("#B3A183", "concrete"),
             "door": ("#7A4B24", "wood"),
+            "frame": ("#6B563C", None),
             "glazing": ("#A6C6D2", None),
             "railing": ("#8A7A63", None),
             "ground": ("#FFFFFF", "grass"),
@@ -170,10 +226,11 @@ PRESETS: dict[str, dict] = {
     },
 }
 
-DEFAULT_PRESET = "plaster_stone"
+DEFAULT_PRESET = "contemporary"
 
 ROUGHNESS = {
     "glazing": 0.08,
+    "frame": 0.45,
     "railing": 0.25,
     "door": 0.55,
     "roof": 0.95,

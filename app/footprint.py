@@ -221,25 +221,28 @@ def ring_rects(
     seal_ft: float = SEAL_FT,
     rects=None,
     columns: list[Column] | None = None,
+    outward: bool = False,
 ) -> list[tuple[float, float, float, float]]:
-    """A closed band just inside the outline — the parapet.
+    """A closed band along the outline — the parapet, or a projecting band.
 
     Built from the footprint's own boundary rather than from the external walls,
     so the ring always closes: along a balcony edge, across a car port, anywhere
-    there is no wall to follow.
+    there is no wall to follow. ``outward`` grows the band away from the
+    building instead of into it, which is what a floor band or a coping does.
     """
     if rects is None:
         rects = footprint_rects(walls, cell_ft, seal_ft, columns)
     if not rects:
         return []
+    sign = -1 if outward else 1
     out = []
     for axis, pos, a, b, inward in outline_edges(rects):
+        grow = thickness_ft * sign * (1 if inward > 0 else -1)
+        lo, hi = sorted((pos, pos + grow))
         if axis == "h":
-            y0, y1 = (pos, pos + thickness_ft) if inward > 0 else (pos - thickness_ft, pos)
-            out.append((a, y0, b, y1))
+            out.append((a, lo, b, hi))
         else:
-            x0, x1 = (pos, pos + thickness_ft) if inward > 0 else (pos - thickness_ft, pos)
-            out.append((x0, a, x1, b))
+            out.append((lo, a, hi, b))
     return out
 
 

@@ -506,6 +506,7 @@ def catalog() -> dict:
         "slab": ["concrete", "plaster", "screed", "none"],
         "column": ["concrete", "plaster", "stone", "none"],
         "stair": ["concrete", "stone", "wood", "screed", "none"],
+        "frame": ["none", "metal", "wood"],
         "door": ["wood", "metal", "none"],
         "glazing": ["none"],
         "railing": ["none", "metal"],

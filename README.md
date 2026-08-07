@@ -80,10 +80,12 @@ checked by eye in the drawing itself:
 | Glazing is drawn in a different colour inside the wall band | window position and width |
 | The same colour with **no wall band behind it** | a railing — a balcony edge or a stairwell guard, built waist high rather than as a wall |
 | RCC columns are solid red rectangles | column grid, the shared datum every storey is pinned to — and, where both walls stop at a corner column, the corner itself |
+| A ladder of parallel lines at a constant pitch, beside an `UP` or `DN` marker | a stair — the pitch is the going, the line length is the flight width |
 | Where a wall tees into another, only its exposed face is drawn past the junction | walls are run on into the wall they meet — and no further, so a doorway is never bridged |
 
 Five more rules keep rubbish out: a band that is one rung of an evenly spaced
-ladder is stair treads or hatching, not a wall; a band shorter than it is thick
+ladder is stair treads or hatching, not a wall — those rungs are handed to the
+stair reader rather than discarded, which is how the staircase gets built; a band shorter than it is thick
 is a corner artefact, not a wall; wall fragments far from the building are
 dropped; a gap only counts as a doorway if it is at least 2 ft wide, closed
 at its far end by a wall or a jamb, inside the building, and not opening onto a
@@ -175,7 +177,7 @@ the sheet labels ROAD, and the car parks in the room it labels as parking.
 |---|---|
 | `model.glb` | glTF 2.0 binary. Metres, Y up. One named object per group, textures embedded. |
 | `model.obj` + `model.mtl` + `textures/` | Wavefront, for anything that won't take glTF. |
-| `blender_import.py` | `blender --python blender_import.py` — imports the glb, sets metric units, adds a sun and a three-quarter camera. |
+| `blender_import.py` | `blender --python blender_import.py` — imports the glb into a scene that is already standing up: metric units, a physical sky lighting the model and serving as the background, a sun on the bearing read off the compass, four cameras framed on the building, and one collection per storey so the roof can be hidden in a click. |
 | `model.json` | Every wall, opening, column, room, setting and diagnostic. |
 | `README.txt` | What was measured and what was assumed, for this specific model. |
 | `model-bundle.zip` | All of the above. |
@@ -213,6 +215,7 @@ Turn it off in step 4 if you'd rather keep sheet orientation.
 | column positions and sizes | slab thickness |
 | room extents and names | plinth height |
 | railing positions and lengths | parapet and railing heights |
+| stair position, going, flight width and tread count | the riser — derived from the storey height, not measured |
 | the drawing scale | roof type |
 | which way north points | |
 

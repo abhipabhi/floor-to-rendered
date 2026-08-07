@@ -23,6 +23,7 @@ import statistics
 from dataclasses import dataclass, field
 
 from . import geom
+from . import stairs as stairs_mod
 from .footprint import mark_exterior
 from .geom import Band, Raster, Run
 from .models import Column, Opening, PlanExtract, Room, ScaleInfo, Wall
@@ -316,12 +317,18 @@ def wall_spacings(hist: dict[float, int], max_ratio: float = 3.0) -> list[float]
     return sorted(out)
 
 
-def reject_stacks(bands: list[Band], runs: list[Run], tol: float = 0.15) -> list[Band]:
-    """Drop bands that are one rung of an evenly spaced ladder.
+def reject_stacks(
+    bands: list[Band], runs: list[Run], tol: float = 0.15
+) -> tuple[list[Band], list[Band]]:
+    """Split bands into walls and rungs of an evenly spaced ladder.
 
     Stair treads, hatching and ramp strips are parallel lines at a constant
     pitch that looks exactly like a wall thickness. A real wall has nothing at
     the same pitch immediately beyond either face.
+
+    The rungs are *returned* rather than dropped, because a stair is the most
+    conspicuous thing missing from the model and this is where the drawing
+    already told us exactly where it is.
     """
     by_pen: dict[float, dict[float, list[tuple[float, float]]]] = {}
     for r in runs:
@@ -337,16 +344,19 @@ def reject_stacks(bands: list[Band], runs: list[Run], tol: float = 0.15) -> list
                 return True
         return False
 
-    out = []
+    out: list[Band] = []
+    rungs: list[Band] = []
     for band in bands:
         t = band.thickness
         slack = max(0.3, tol * t)
-        if not any(
+        if any(
             covered(band.pen, target, slack, band.a, band.b)
             for target in (band.lo - t, band.hi + t)
         ):
+            rungs.append(band)
+        else:
             out.append(band)
-    return out
+    return out, rungs
 
 
 def _column_targets(columns: list[Fill], axis: str) -> list[Band]:
@@ -455,10 +465,13 @@ def find_bands(
     diag: Diagnostics | None = None,
     only: list[float] | None = None,
     columns: list[Fill] | None = None,
+    stacks: list[Band] | None = None,
 ) -> list[Band]:
     """Wall bands on both axes, within a thickness window in points.
 
     ``only`` restricts thicknesses to a short list of known spacings.
+    ``stacks``, if given, collects the evenly spaced rungs that were rejected —
+    the treads of a stair among them.
     """
     # Pair both axes generously first: the extension step needs to see the walls
     # a wall might meet, and those are the ones at right angles to it.
@@ -488,9 +501,11 @@ def find_bands(
         # a band shorter than it is thick is a corner artefact, not a wall
         cand = [b for b in cand if b.length >= MIN_WALL_ASPECT * b.thickness]
         stubs += before - len(cand)
-        kept = reject_stacks(cand, runs)
-        dropped += len(cand) - len(kept)
+        kept, rungs = reject_stacks(cand, runs)
+        dropped += len(rungs)
         bands += kept
+        if stacks is not None:
+            stacks += rungs
     if diag and dropped:
         diag.add(f"{dropped} evenly-spaced bands rejected as stairs, treads or hatch")
     if diag and stubs:
@@ -833,6 +848,7 @@ def extract_plan(
     _check_round_thicknesses(sig, px, scale, diag, unit_system.units)
 
     # -- pass B: the real extraction, with wall sizes in real units
+    stacks: list[Band] = []
     bands = find_bands(
         runs_h,
         runs_v,
@@ -841,6 +857,7 @@ def extract_plan(
         MIN_WALL_LEN_FT * px,
         diag,
         columns=cols_px,
+        stacks=stacks,
     )
     doors = solo_gaps(
         bands, runs_h + runs_v, MIN_DOOR_FT * px, MAX_DOOR_FT * px, tol=0.2 * px
@@ -872,6 +889,9 @@ def extract_plan(
 
     def fy(v: float) -> float:
         return round((v - oy) / px, 4)
+
+    # -- the stair, out of the tread stacks that pass B rejected as walls
+    stairs_found = stairs_mod.find_stairs(stacks, sheet.words, px, ox, oy, diag)
 
     # -- assemble
     walls: list[Wall] = []
@@ -969,6 +989,7 @@ def extract_plan(
         walls=walls,
         columns=columns,
         rooms=rooms,
+        stairs=stairs_found,
         north_deg=north_bearing(sheet),
         warnings=warnings + diag.notes,
     )

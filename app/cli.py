@@ -99,7 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     with open(os.path.join(args.out, "blender_import.py"), "w") as fh:
         fh.write(
             blender_script(
-                "model.glb", bool(result.summary.get("rotation_applied_deg") is not None)
+                "model.glb",
+                bool(result.summary.get("rotation_applied_deg") is not None),
+                storeys=[lv["name"] for lv in result.summary.get("levels", [])],
             )
         )
     with open(os.path.join(args.out, "model.json"), "w") as fh:

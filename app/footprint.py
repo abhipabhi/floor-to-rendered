@@ -69,14 +69,20 @@ def wall_raster(
 
 
 def enclosed_mask(
-    raster: geom.Raster, seal_ft: float = SEAL_FT
+    raster: geom.Raster,
+    seal_ft: float = SEAL_FT,
+    holes: list[tuple[float, float, float, float]] | None = None,
 ) -> np.ndarray:
-    """Walls plus everything they enclose.
+    """Walls plus everything they enclose, less anything punched through.
 
     A car port open to the street, or an entrance lobby, is still part of the
     floor plate, so gaps narrower than ``seal_ft`` are closed before deciding
     what is inside. The closing is used only to make that decision — the walls
     themselves are never moved.
+
+    ``holes`` are the places there is deliberately no floor: a stairwell, a
+    duct, a double-height void. They are cut *after* the enclosure decision,
+    because a shaft is inside the building — it just has no slab over it.
     """
     r = max(1, int(round(seal_ft / 2 / raster.cell)))
     closed = erode(dilate(raster.grid, r), r) | raster.grid
@@ -91,6 +97,12 @@ def enclosed_mask(
     inside = closed.copy()
     if regions.area:
         inside |= ~np.isin(regions.labels, list(border)) & ~closed
+    for h in holes or []:
+        cut = geom.Raster(
+            raster.x0, raster.y0, raster.cell, np.zeros_like(raster.grid)
+        )
+        cut.fill_rect(*h)
+        inside &= ~cut.grid
     return inside
 
 
@@ -103,7 +115,7 @@ def _to_rects(mask: np.ndarray, raster: geom.Raster):
     return out
 
 
-def _wall_coordinates(walls: list[Wall], raster: geom.Raster, columns=None):
+def _wall_coordinates(walls: list[Wall], raster: geom.Raster, columns=None, holes=None):
     """The x and y lines the building is actually drawn on.
 
     Decomposing the footprint on *these* lines rather than on the raster grid is
@@ -124,13 +136,18 @@ def _wall_coordinates(walls: list[Wall], raster: geom.Raster, columns=None):
         return out
 
     items = list(walls) + list(columns or [])
-    xs = axis_lines([v for w in items for v in (w.x0, w.x1)], raster.x0, x_end)
-    ys = axis_lines([v for w in items for v in (w.y0, w.y1)], raster.y0, y_end)
-    return xs, ys
+    xv = [v for w in items for v in (w.x0, w.x1)]
+    yv = [v for w in items for v in (w.y0, w.y1)]
+    # a hole's own edges are cut lines too, or its boundary lands on the raster
+    # grid and gets the sliver staircase that snapping exists to avoid
+    for h in holes or []:
+        xv += [h[0], h[2]]
+        yv += [h[1], h[3]]
+    return axis_lines(xv, raster.x0, x_end), axis_lines(yv, raster.y0, y_end)
 
 
-def _snap_to_walls(inside, raster: geom.Raster, walls: list[Wall], columns=None):
-    xs, ys = _wall_coordinates(walls, raster, columns)
+def _snap_to_walls(inside, raster: geom.Raster, walls: list[Wall], columns=None, holes=None):
+    xs, ys = _wall_coordinates(walls, raster, columns, holes)
     if len(xs) < 2 or len(ys) < 2:
         return _to_rects(inside, raster)
 
@@ -156,16 +173,19 @@ def footprint_rects(
     cell_ft: float = CELL_FT,
     seal_ft: float = SEAL_FT,
     columns: list[Column] | None = None,
+    holes: list[tuple[float, float, float, float]] | None = None,
 ) -> list[tuple[float, float, float, float]]:
     """The slab outline as disjoint rectangles, with edges on the walls.
 
     Disjoint because two coplanar overlapping slabs z-fight; on the walls
-    because a slab that misses its own wall by an inch is visible.
+    because a slab that misses its own wall by an inch is visible. ``holes``
+    are cut out of the plate — a stairwell has no floor over it.
     """
     raster = wall_raster(walls, cell_ft, seal_ft, columns)
     if raster is None:
         return []
-    return _snap_to_walls(enclosed_mask(raster, seal_ft), raster, walls, columns)
+    mask = enclosed_mask(raster, seal_ft, holes)
+    return _snap_to_walls(mask, raster, walls, columns, holes)
 
 
 def outline_edges(rects, tol: float = 1e-4):
@@ -201,25 +221,28 @@ def ring_rects(
     seal_ft: float = SEAL_FT,
     rects=None,
     columns: list[Column] | None = None,
+    outward: bool = False,
 ) -> list[tuple[float, float, float, float]]:
-    """A closed band just inside the outline — the parapet.
+    """A closed band along the outline — the parapet, or a projecting band.
 
     Built from the footprint's own boundary rather than from the external walls,
     so the ring always closes: along a balcony edge, across a car port, anywhere
-    there is no wall to follow.
+    there is no wall to follow. ``outward`` grows the band away from the
+    building instead of into it, which is what a floor band or a coping does.
     """
     if rects is None:
         rects = footprint_rects(walls, cell_ft, seal_ft, columns)
     if not rects:
         return []
+    sign = -1 if outward else 1
     out = []
     for axis, pos, a, b, inward in outline_edges(rects):
+        grow = thickness_ft * sign * (1 if inward > 0 else -1)
+        lo, hi = sorted((pos, pos + grow))
         if axis == "h":
-            y0, y1 = (pos, pos + thickness_ft) if inward > 0 else (pos - thickness_ft, pos)
-            out.append((a, y0, b, y1))
+            out.append((a, lo, b, hi))
         else:
-            x0, x1 = (pos, pos + thickness_ft) if inward > 0 else (pos - thickness_ft, pos)
-            out.append((x0, a, x1, b))
+            out.append((lo, a, hi, b))
     return out
 
 

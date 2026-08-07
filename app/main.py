@@ -455,7 +455,11 @@ def build_model(job_id: str) -> dict:
         "model.glb": glb,
         "model.obj": write_obj(result.scene),
         "model.mtl": write_mtl(result.scene),
-        "blender_import.py": blender_script("model.glb", True),
+        "blender_import.py": blender_script(
+            "model.glb",
+            True,
+            storeys=[lv["name"] for lv in result.summary.get("levels", [])],
+        ),
         "model.json": _json.dumps(
             {
                 "summary": result.summary,
@@ -505,6 +509,8 @@ def catalog() -> dict:
         "roof": tex.FLAT_TEXTURES,
         "slab": ["concrete", "plaster", "screed", "none"],
         "column": ["concrete", "plaster", "stone", "none"],
+        "stair": ["concrete", "stone", "wood", "screed", "none"],
+        "frame": ["none", "metal", "wood"],
         "door": ["wood", "metal", "none"],
         "glazing": ["none"],
         "railing": ["none", "metal"],

@@ -166,10 +166,16 @@ def add_ground(
         ground_z - 0.5,
         ground_z,
     )
+    # A paved apron round the building. Without it the walls grow straight out
+    # of the lawn, which is the single clearest sign of an untreated model —
+    # real houses meet the ground on something.
+    bx0, by0, bx1, by1 = ex_bounds
+    apron = scene.mesh("Site — apron", "drive")
+    _box(apron, bx0 - 3.0, by0 - 3.0, bx1 + 3.0, by1 + 3.0, ground_z, ground_z + 0.06)
+
     if not params.driveway:
         return
     drive = scene.mesh("Site — driveway", "drive")
-    bx0, by0, bx1, by1 = ex_bounds
     a = plot.drive_from - plot.drive_width / 2
     b = plot.drive_from + plot.drive_width / 2
     if plot.road == "+y":

@@ -92,17 +92,99 @@ def add_wall(
         if head < height_ft - 0.001:
             _box_along(m, wall, a, b, base_ft + head, top)
 
+    d = params.detail
+    outer, normal = _outer_face(wall)
+    relief = d.enabled and wall.exterior and wall.outside in ("lo", "hi")
+
     for a, b, sill, head, o in spans:
+        # The pane sits back in the reveal rather than flush, so the opening
+        # reads as a hole with depth. This is the whole reason Wall.outside is
+        # kept: flush glazing on a flat wall is what makes a model look printed
+        # on rather than built.
+        set_back = d.reveal_ft if relief else 0.0
+        z0, z1 = base_ft + sill, base_ft + head
         if o.kind == "window" and params.glazing:
             pane = scene.mesh(glazing_group, "glazing")
-            _box_along(
-                pane, wall, a, b, base_ft + sill, base_ft + head, thickness_ft=0.06
-            )
+            _inset(pane, wall, a, b, z0, z1, outer, normal, set_back, 0.06)
         elif o.kind == "door" and params.doors:
             leaf = scene.mesh(door_group, "door")
-            _box_along(
-                leaf, wall, a, b, base_ft + sill, base_ft + head, thickness_ft=0.12
-            )
+            _inset(leaf, wall, a, b, z0, z1, outer, normal, set_back, 0.12)
+
+        if not relief:
+            continue
+        if d.frames:
+            _frame(scene, wall, a, b, z0, z1, outer, normal, d, group)
+        if d.sills and o.kind == "window":
+            _sill(scene, wall, a, b, z0, outer, normal, d, group)
+        if d.chajjas:
+            _chajja(scene, wall, a, b, z1, outer, normal, d, params, group)
+
+
+# --------------------------------------------------------------------------- #
+# the small stuff that makes a wall read as built
+# --------------------------------------------------------------------------- #
+def _outer_face(wall: Wall) -> tuple[float, float]:
+    """The coordinate of the face that looks outside, and which way it faces."""
+    lo, hi = (wall.y0, wall.y1) if wall.axis == "h" else (wall.x0, wall.x1)
+    if wall.outside == "lo":
+        return lo, -1.0
+    return hi, 1.0
+
+
+def _box_across(mesh, wall: Wall, a: float, b: float, z0: float, z1: float,
+                c0: float, c1: float) -> None:
+    """A box ``a..b`` along the wall and ``c0..c1`` across its thickness."""
+    lo, hi = min(c0, c1), max(c0, c1)
+    if wall.axis == "h":
+        mesh.add_box(a * FT_TO_M, z0 * FT_TO_M, lo * FT_TO_M,
+                     b * FT_TO_M, z1 * FT_TO_M, hi * FT_TO_M)
+    else:
+        mesh.add_box(lo * FT_TO_M, z0 * FT_TO_M, a * FT_TO_M,
+                     hi * FT_TO_M, z1 * FT_TO_M, b * FT_TO_M)
+
+
+def _inset(mesh, wall: Wall, a: float, b: float, z0: float, z1: float,
+           outer: float, normal: float, set_back: float, thick: float) -> None:
+    face = outer - normal * set_back
+    _box_across(mesh, wall, a, b, z0, z1, face, face - normal * thick)
+
+
+def _frame(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float,
+           outer: float, normal: float, d, group: str) -> None:
+    """A frame round the opening, standing just proud of the reveal."""
+    m = scene.mesh(f"{group} frames", "frame")
+    w = min(d.frame_ft, (b - a) / 2.2, (z1 - z0) / 2.2)
+    if w <= 0.02:
+        return
+    c0 = outer + normal * 0.02
+    c1 = outer - normal * max(0.0, d.reveal_ft - 0.02)
+    _box_across(m, wall, a, a + w, z0, z1, c0, c1)          # jamb
+    _box_across(m, wall, b - w, b, z0, z1, c0, c1)          # jamb
+    _box_across(m, wall, a, b, z1 - w, z1, c0, c1)          # head
+    _box_across(m, wall, a, b, z0, z0 + w, c0, c1)          # cill piece
+
+
+def _sill(scene: Scene, wall: Wall, a: float, b: float, z0: float,
+          outer: float, normal: float, d, group: str) -> None:
+    """A projecting sill, run past the opening at both ends as a real one is."""
+    m = scene.mesh(f"{group} sills", "trim")
+    over = 0.3
+    _box_across(m, wall, a - over, b + over, z0 - 0.22, z0,
+                outer + normal * d.sill_projection_ft, outer - normal * 0.15)
+
+
+def _chajja(scene: Scene, wall: Wall, a: float, b: float, z1: float,
+            outer: float, normal: float, d, params: BuildParams, group: str) -> None:
+    """The sunshade over an opening.
+
+    Its depth is the one number here the drawings do state: the tie-beam sheet
+    writes ``slab proj. 1'``. Where a set does not say, it falls back to a foot.
+    """
+    depth = d.chajja_ft or params.slab_projection_ft or 1.0
+    m = scene.mesh(f"{group} chajjas", "trim")
+    over = 0.75
+    _box_across(m, wall, a - over, b + over, z1, z1 + 0.3,
+                outer + normal * depth, outer - normal * 0.2)
 
 
 def _box_along(
@@ -133,11 +215,109 @@ def _box_along(
         )
 
 
+#: room names that are shafts, not rooms — there is no floor over them
+SHAFT_ROOMS = {"DUCT", "SHAFT", "VOID"}
+
+
+def _slab_holes(ex) -> list[tuple[float, float, float, float]]:
+    """Where this storey deliberately has no floor.
+
+    A stairwell and a duct are inside the building but have no slab across
+    them. Both are measured: the well from the flights that wrap it, the shaft
+    from a room the drawing named.
+    """
+    holes = [st.well for st in ex.stairs if st.well]
+    for r in ex.rooms:
+        if set(r.name.upper().split()) & SHAFT_ROOMS:
+            holes.append((r.x0, r.y0, r.x1, r.y1))
+    return holes
+
+
+def _add_stair(scene: Scene, stair, base: float, f2f: float, group: str) -> None:
+    """Build a stair as solid steps rising from this storey's floor.
+
+    The going and the width are measured off the drawing; the **riser is not
+    and cannot be** — a plan states no heights. It is derived by dividing the
+    storey height by the number of risers, which is one more than the number of
+    treads because the last riser lands you on the floor above. That also means
+    the top tread finishes a riser short of the slab, which is exactly where a
+    real one stops.
+    """
+    treads = sum(f.treads for f in stair.flights)
+    if not treads:
+        return
+    riser = f2f / (treads + 1)
+    mesh = scene.mesh(group, "stair")
+    step = 0
+    for flight in stair.flights:
+        for i in range(flight.treads):
+            step += 1
+            top = base + step * riser
+            if flight.up in ("+x", "-x"):
+                a = flight.x0 + i * flight.going_ft
+                b = a + flight.going_ft
+                if flight.up == "-x":
+                    b = flight.x1 - i * flight.going_ft
+                    a = b - flight.going_ft
+                box = (a, flight.y0, b, flight.y1)
+            else:
+                a = flight.y0 + i * flight.going_ft
+                b = a + flight.going_ft
+                if flight.up == "-y":
+                    b = flight.y1 - i * flight.going_ft
+                    a = b - flight.going_ft
+                box = (flight.x0, a, flight.x1, b)
+            mesh.add_box(
+                box[0] * FT_TO_M, base * FT_TO_M, box[1] * FT_TO_M,
+                box[2] * FT_TO_M, top * FT_TO_M, box[3] * FT_TO_M,
+            )
+
+
 def _slab(scene: Scene, group: str, rects, z0: float, z1: float, material="slab") -> None:
     m = scene.mesh(group, material)
     for x0, y0, x1, y1 in rects:
         m.add_box(
             x0 * FT_TO_M, z0 * FT_TO_M, y0 * FT_TO_M, x1 * FT_TO_M, z1 * FT_TO_M, y1 * FT_TO_M
+        )
+
+
+def _add_balustrade(
+    scene: Scene, wall: Wall, base_ft: float, height_ft: float, group: str
+) -> None:
+    """A balcony guard as glass between posts under a rail.
+
+    Built as a solid slab it reads as a low wall, which is what the balconies
+    looked like — heavy, and nothing like the light guards these elevations
+    actually have. Kerb, glass, posts and a capping rail cost a few boxes and
+    change the whole character of a facade.
+    """
+    m = scene.mesh(group, "railing")
+    glass = scene.mesh(f"{group} glass", "glazing")
+    a, b = wall.u_range()
+    span = b - a
+    if span <= 0.2:
+        return
+    top = base_ft + height_ft
+    thick = max(0.08, min(0.16, wall.thickness_ft))
+    mid = (
+        (wall.y0 + wall.y1) / 2 if wall.axis == "h" else (wall.x0 + wall.x1) / 2
+    )
+    c0, c1 = mid - thick / 2, mid + thick / 2
+
+    _box_across(m, wall, a, b, base_ft, base_ft + 0.25, c0, c1)      # kerb
+    _box_across(m, wall, a, b, top - 0.18, top, c0 - 0.05, c1 + 0.05)  # capping rail
+    # glass sits between them, thinner than the rail so the rail reads as a cap
+    _box_across(
+        glass, wall, a + 0.08, b - 0.08, base_ft + 0.25, top - 0.18,
+        mid - thick / 4, mid + thick / 4,
+    )
+    # posts about every four feet, and always at both ends
+    n = max(1, int(round(span / 4.0)))
+    for i in range(n + 1):
+        u = a + span * i / n
+        _box_across(
+            m, wall, min(max(u - 0.09, a), b - 0.18), min(max(u + 0.09, a + 0.18), b),
+            base_ft, top, c0 - 0.03, c1 + 0.03,
         )
 
 
@@ -198,10 +378,35 @@ def build(
         base, f2f, wh = elevations[ex.level]
         name = ex.level_name
 
-        rects = footprint_rects(ex.walls, columns=ex.columns)
+        holes = _slab_holes(ex)
+        rects = footprint_rects(ex.walls, columns=ex.columns, holes=holes)
         _slab(scene, f"{name} slab", rects, base - lp.slab_thickness_ft, base)
 
+        # The floor band: the slab edge expressed on the outside, which is what
+        # gives an elevation its horizontal lines and puts a shadow under every
+        # storey. Grown outwards from the footprint boundary, so it follows a
+        # balcony and a bay the same way the parapet already does.
+        d = params.detail
+        if d.enabled and d.floor_bands and ex.level > min(e.level for e in extracts):
+            _slab(
+                scene,
+                f"{name} floor band",
+                ring_rects(ex.walls, d.band_projection_ft, rects=rects, outward=True),
+                base - lp.slab_thickness_ft - 0.18,
+                base + 0.22,
+                material="trim",
+            )
+
+        for st in ex.stairs:
+            _add_stair(scene, st, base, f2f, f"{name} stairs")
+
         for w in ex.walls:
+            if w.is_railing and params.detail.enabled and params.detail.balustrades:
+                _add_balustrade(
+                    scene, w, base, w.height_ft or params.railing_ft,
+                    f"{name} railings",
+                )
+                continue
             if w.is_railing:
                 # a balcony guard: same plan, waist height, its own material
                 add_wall(
@@ -260,7 +465,13 @@ def build(
             }
         )
         if ex.level == top_level:
-            top_footprint = rects
+            # The roof keeps its voids filled. A stairwell is a hole in a
+            # *floor* — the drawing says so — but a hole in the roof would be a
+            # weather opening the drawing never states, and a stair reaching a
+            # roof is covered by a mumty this model does not build. Solid is the
+            # conservative reading; the parapet then closes round the outside
+            # only, instead of ringing an imaginary shaft in the roof.
+            top_footprint = footprint_rects(ex.walls, columns=ex.columns)
             top_walls = ex.walls
 
     # roof
@@ -290,6 +501,21 @@ def build(
             roof_top + params.parapet_ft,
             material="trim",
         )
+        # A coping course caps the parapet and oversails it slightly, which is
+        # what stops a roofline reading as a cut edge against the sky.
+        if params.detail.enabled and params.detail.coping:
+            _slab(
+                scene,
+                "Parapet coping",
+                ring_rects(
+                    top_walls,
+                    params.parapet_thickness_ft + 0.3,
+                    rects=top_footprint,
+                ),
+                roof_top + params.parapet_ft,
+                roof_top + params.parapet_ft + 0.28,
+                material="trim",
+            )
 
     # the plinth: the band of wall between the ground and the ground floor, given
     # its own material so a stone or tiled base reads the way it does on site

@@ -83,6 +83,34 @@ class Wall(BaseModel):
         return (self.x0, self.x1) if self.axis == "h" else (self.y0, self.y1)
 
 
+class Flight(BaseModel):
+    """One straight run of treads, as its footprint rectangle in plan feet."""
+
+    axis: Axis  # the axis the tread lines run along
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    treads: int
+    going_ft: float  # measured: the tread depth, from the drawn pitch
+    width_ft: float  # measured: how wide the flight is to walk up
+    up: Literal["+x", "-x", "+y", "-y"] = "+x"
+
+
+class Stair(BaseModel):
+    """A stair: its flights, and the shaft they wrap around if they do.
+
+    The riser is deliberately absent. It cannot be measured from a plan, only
+    derived once a storey height is known, so it is worked out at build time
+    and attributed there rather than looking like something the drawing said.
+    """
+
+    id: str
+    flights: list[Flight] = Field(default_factory=list)
+    well: tuple[float, float, float, float] | None = None
+    treads: int = 0
+
+
 class Column(BaseModel):
     id: str
     x0: float
@@ -124,6 +152,7 @@ class PlanExtract(BaseModel):
     walls: list[Wall] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)
     rooms: list[Room] = Field(default_factory=list)
+    stairs: list[Stair] = Field(default_factory=list)
     north_deg: float | None = None  # compass bearing of plan +x, degrees CW from north
     warnings: list[str] = Field(default_factory=list)
 
@@ -173,7 +202,7 @@ class LevelParams(BaseModel):
 class FinishParams(BaseModel):
     """What the building is made of. Not in any drawing — entirely your choice."""
 
-    preset: str = "plaster_stone"
+    preset: str = "contemporary"
     # slot → [colour, texture]; anything absent falls back to the preset
     slots: dict[str, list[str | None]] = Field(default_factory=dict)
 
@@ -188,6 +217,31 @@ class FinishParams(BaseModel):
             texture = value[1] if len(value) > 1 else out[key][1]
             out[key] = (color, texture)
         return out
+
+
+class DetailParams(BaseModel):
+    """The relief on the facade.
+
+    A plain extrusion of a floor plan is a box with holes in it, and good
+    lighting has nothing to catch on it. What makes an elevation read as a
+    building is the small stuff that projects: a reveal around every opening, a
+    sill, a sunshade, a band at each floor. None of it is in a plan, so all of
+    it is a choice — but the defaults are the ones this kind of house is
+    actually built with.
+    """
+
+    enabled: bool = True
+    reveal_ft: float = 0.25  # how far the glass sits back from the outer face
+    frames: bool = True
+    frame_ft: float = 0.22  # width of the frame around an opening
+    sills: bool = True
+    sill_projection_ft: float = 0.25
+    chajjas: bool = True  # the sunshade over a window or door
+    chajja_ft: float | None = None  # None → the projection measured off the set
+    floor_bands: bool = True
+    band_projection_ft: float = 0.17
+    coping: bool = True  # the cap course on top of the parapet
+    balustrades: bool = True  # railings as glass and rail, not a solid slab
 
 
 class SiteParams(BaseModel):
@@ -234,6 +288,7 @@ class BuildParams(BaseModel):
     units: Literal["m", "ft"] = "m"
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
+    detail: DetailParams = Field(default_factory=DetailParams)
     provenance: dict[str, Quantity] = Field(default_factory=dict)
     user_set: list[str] = Field(default_factory=list)
 

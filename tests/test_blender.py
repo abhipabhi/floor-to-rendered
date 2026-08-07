@@ -43,8 +43,40 @@ def test_a_model_with_no_storeys_still_produces_a_runnable_script():
 def test_the_scene_brings_its_own_light_and_background():
     """The complaint this answers is opening a .glb into a grey void."""
     src = blender_script("model.glb", True)
-    for feature in ("ShaderNodeTexSky", "light_add", "camera_add", "resolution_x"):
+    for feature in ("ShaderNodeTexSky", "light_add", "camera_add", "resolution_x",
+                    "Backdrop ground"):
         assert feature in src, f"the scene should set up {feature}"
+
+
+def test_the_sky_properties_are_set_one_at_a_time():
+    """Blender renames these between versions — the physical sky model has been
+    both NISHITA and MULTIPLE_SCATTERING. Setting them inside a single
+    try/except means one rename leaves the sky node created but never linked,
+    and the scene renders a flat grey background that looks like a bug in the
+    model. This is exactly what happened on Blender 5.2."""
+    src = blender_script("model.glb", True)
+    assert "_set_any(sky" in src and "_set_soft(sky" in src
+    body = src.split("def build_sky")[1].split("def ")[0]
+    assert body.count("try:") <= 1, "the sky properties must not share one try"
+
+
+def test_the_cameras_are_tracked_not_shortest_rotated():
+    """`rotation_difference` gives the shortest rotation onto a direction and
+    says nothing about roll, so every camera comes out banked and the horizon
+    runs diagonally. `to_track_quat` is what keeps the head up."""
+    src = blender_script("model.glb", True)
+    assert "to_track_quat" in src
+    # the name still appears in the comment explaining why it is wrong, so
+    # look for the call rather than the word
+    assert ".rotation_difference(" not in src
+
+
+def test_the_sky_does_not_double_count_the_sun():
+    """The sky texture has its own sun disc and the scene also adds a Sun lamp.
+    Leave both on and the fill drowns the key light — the model renders with no
+    cast shadows at all, which reads as broken rather than as over-lit."""
+    src = blender_script("model.glb", True)
+    assert '_set_soft(sky, "sun_intensity", 0.0)' in src
 
 
 def test_braces_in_the_template_survive_formatting():

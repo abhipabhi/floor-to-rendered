@@ -177,7 +177,7 @@ the sheet labels ROAD, and the car parks in the room it labels as parking.
 |---|---|
 | `model.glb` | glTF 2.0 binary. Metres, Y up. One named object per group, textures embedded. |
 | `model.obj` + `model.mtl` + `textures/` | Wavefront, for anything that won't take glTF. |
-| `blender_import.py` | `blender --python blender_import.py` — imports the glb, sets metric units, adds a sun and a three-quarter camera. |
+| `blender_import.py` | `blender --python blender_import.py` — imports the glb into a scene that is already standing up: metric units, a physical sky lighting the model and serving as the background, a sun on the bearing read off the compass, four cameras framed on the building, and one collection per storey so the roof can be hidden in a click. |
 | `model.json` | Every wall, opening, column, room, setting and diagnostic. |
 | `README.txt` | What was measured and what was assumed, for this specific model. |
 | `model-bundle.zip` | All of the above. |

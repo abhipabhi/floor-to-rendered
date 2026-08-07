@@ -505,6 +505,7 @@ def catalog() -> dict:
         "roof": tex.FLAT_TEXTURES,
         "slab": ["concrete", "plaster", "screed", "none"],
         "column": ["concrete", "plaster", "stone", "none"],
+        "stair": ["concrete", "stone", "wood", "screed", "none"],
         "door": ["wood", "metal", "none"],
         "glazing": ["none"],
         "railing": ["none", "metal"],

@@ -133,6 +133,64 @@ def _box_along(
         )
 
 
+#: room names that are shafts, not rooms — there is no floor over them
+SHAFT_ROOMS = {"DUCT", "SHAFT", "VOID"}
+
+
+def _slab_holes(ex) -> list[tuple[float, float, float, float]]:
+    """Where this storey deliberately has no floor.
+
+    A stairwell and a duct are inside the building but have no slab across
+    them. Both are measured: the well from the flights that wrap it, the shaft
+    from a room the drawing named.
+    """
+    holes = [st.well for st in ex.stairs if st.well]
+    for r in ex.rooms:
+        if set(r.name.upper().split()) & SHAFT_ROOMS:
+            holes.append((r.x0, r.y0, r.x1, r.y1))
+    return holes
+
+
+def _add_stair(scene: Scene, stair, base: float, f2f: float, group: str) -> None:
+    """Build a stair as solid steps rising from this storey's floor.
+
+    The going and the width are measured off the drawing; the **riser is not
+    and cannot be** — a plan states no heights. It is derived by dividing the
+    storey height by the number of risers, which is one more than the number of
+    treads because the last riser lands you on the floor above. That also means
+    the top tread finishes a riser short of the slab, which is exactly where a
+    real one stops.
+    """
+    treads = sum(f.treads for f in stair.flights)
+    if not treads:
+        return
+    riser = f2f / (treads + 1)
+    mesh = scene.mesh(group, "stair")
+    step = 0
+    for flight in stair.flights:
+        for i in range(flight.treads):
+            step += 1
+            top = base + step * riser
+            if flight.up in ("+x", "-x"):
+                a = flight.x0 + i * flight.going_ft
+                b = a + flight.going_ft
+                if flight.up == "-x":
+                    b = flight.x1 - i * flight.going_ft
+                    a = b - flight.going_ft
+                box = (a, flight.y0, b, flight.y1)
+            else:
+                a = flight.y0 + i * flight.going_ft
+                b = a + flight.going_ft
+                if flight.up == "-y":
+                    b = flight.y1 - i * flight.going_ft
+                    a = b - flight.going_ft
+                box = (flight.x0, a, flight.x1, b)
+            mesh.add_box(
+                box[0] * FT_TO_M, base * FT_TO_M, box[1] * FT_TO_M,
+                box[2] * FT_TO_M, top * FT_TO_M, box[3] * FT_TO_M,
+            )
+
+
 def _slab(scene: Scene, group: str, rects, z0: float, z1: float, material="slab") -> None:
     m = scene.mesh(group, material)
     for x0, y0, x1, y1 in rects:
@@ -198,8 +256,12 @@ def build(
         base, f2f, wh = elevations[ex.level]
         name = ex.level_name
 
-        rects = footprint_rects(ex.walls, columns=ex.columns)
+        holes = _slab_holes(ex)
+        rects = footprint_rects(ex.walls, columns=ex.columns, holes=holes)
         _slab(scene, f"{name} slab", rects, base - lp.slab_thickness_ft, base)
+
+        for st in ex.stairs:
+            _add_stair(scene, st, base, f2f, f"{name} stairs")
 
         for w in ex.walls:
             if w.is_railing:
@@ -260,7 +322,13 @@ def build(
             }
         )
         if ex.level == top_level:
-            top_footprint = rects
+            # The roof keeps its voids filled. A stairwell is a hole in a
+            # *floor* — the drawing says so — but a hole in the roof would be a
+            # weather opening the drawing never states, and a stair reaching a
+            # roof is covered by a mumty this model does not build. Solid is the
+            # conservative reading; the parapet then closes round the outside
+            # only, instead of ringing an imaginary shaft in the roof.
+            top_footprint = footprint_rects(ex.walls, columns=ex.columns)
             top_walls = ex.walls
 
     # roof

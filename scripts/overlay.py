@@ -26,6 +26,8 @@ DOOR = (0.95, 0.45, 0.05)
 WINDOW = (0.05, 0.75, 0.45)
 COLUMN = (0.85, 0.15, 0.65)
 ROOM = (0.55, 0.55, 0.60)
+STAIR = (0.10, 0.65, 0.75)
+WELL = (0.95, 0.15, 0.15)
 
 
 def overlay(
@@ -63,6 +65,21 @@ def overlay(
         )
     for c in ex.columns:
         page.draw_rect(R(c.x0, c.y0, c.x1, c.y1), color=COLUMN, width=1.0)
+    for st in ex.stairs:
+        for f in st.flights:
+            page.draw_rect(R(f.x0, f.y0, f.x1, f.y1), color=STAIR, width=1.4)
+            # every tread, so a wrong going shows up as drift against the drawing
+            for i in range(1, f.treads):
+                if f.up in ("+x", "-x"):
+                    v = f.x0 + i * f.going_ft
+                    page.draw_line(R(v, f.y0, v, f.y1).tl, R(v, f.y0, v, f.y1).br,
+                                   color=STAIR, width=0.5)
+                else:
+                    v = f.y0 + i * f.going_ft
+                    page.draw_line(R(f.x0, v, f.x1, v).tl, R(f.x0, v, f.x1, v).br,
+                                   color=STAIR, width=0.5)
+        if st.well:
+            page.draw_rect(R(*st.well), color=WELL, width=1.6, dashes="[3 2] 0")
     for w in ex.walls:
         page.draw_rect(
             R(w.x0, w.y0, w.x1, w.y1),
@@ -98,9 +115,11 @@ def overlay(
 
     doors = sum(1 for w in ex.walls for o in w.openings if o.kind == "door")
     wins = sum(1 for w in ex.walls for o in w.openings if o.kind == "window")
+    treads = sum(f.treads for s in ex.stairs for f in s.flights)
     print(
         f"  {cls.label}: {len(ex.walls)} walls, {doors} doors, {wins} windows, "
         f"{len(ex.columns)} columns, {len(ex.rooms)} rooms, "
+        f"{len(ex.stairs)} stairs ({treads} treads), "
         f"{px:.3f} px/ft ({ex.scale.confidence}) → {path}"
     )
     return path

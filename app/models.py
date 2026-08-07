@@ -83,6 +83,34 @@ class Wall(BaseModel):
         return (self.x0, self.x1) if self.axis == "h" else (self.y0, self.y1)
 
 
+class Flight(BaseModel):
+    """One straight run of treads, as its footprint rectangle in plan feet."""
+
+    axis: Axis  # the axis the tread lines run along
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    treads: int
+    going_ft: float  # measured: the tread depth, from the drawn pitch
+    width_ft: float  # measured: how wide the flight is to walk up
+    up: Literal["+x", "-x", "+y", "-y"] = "+x"
+
+
+class Stair(BaseModel):
+    """A stair: its flights, and the shaft they wrap around if they do.
+
+    The riser is deliberately absent. It cannot be measured from a plan, only
+    derived once a storey height is known, so it is worked out at build time
+    and attributed there rather than looking like something the drawing said.
+    """
+
+    id: str
+    flights: list[Flight] = Field(default_factory=list)
+    well: tuple[float, float, float, float] | None = None
+    treads: int = 0
+
+
 class Column(BaseModel):
     id: str
     x0: float
@@ -124,6 +152,7 @@ class PlanExtract(BaseModel):
     walls: list[Wall] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)
     rooms: list[Room] = Field(default_factory=list)
+    stairs: list[Stair] = Field(default_factory=list)
     north_deg: float | None = None  # compass bearing of plan +x, degrees CW from north
     warnings: list[str] = Field(default_factory=list)
 

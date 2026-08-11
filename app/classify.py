@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 # sheet kinds
 FLOOR_PLAN = "floor_plan"
+ELEVATION = "elevation"
+SECTION = "section"
 LAYOUT = "layout"
 FOUNDATION = "foundation"
 TIE_BEAM = "tie_beam"
@@ -27,6 +29,8 @@ UNKNOWN = "unknown"
 
 KIND_LABELS = {
     FLOOR_PLAN: "Floor plan",
+    ELEVATION: "Elevation",
+    SECTION: "Section",
     LAYOUT: "Setting-out layout",
     FOUNDATION: "Foundation / footing",
     TIE_BEAM: "Tie beam / plinth beam",
@@ -53,6 +57,19 @@ _LEVELS: list[tuple[str, int, str]] = [
 # generic structural words are only accepted next to PLAN.
 _NON_PLAN: list[tuple[str, str]] = [
     (r"SEPTIC\s*TANK|SOAK\s*PIT|SEWER|DRAIN(?:AGE)?\s*(?:PLAN|DETAIL)", SERVICES),
+    # A sectional elevation is both; it is read as a section, because a section
+    # is the one that states levels through the building rather than on a face.
+    (
+        r"SECTIONAL\s+ELEVATION"
+        r"|\bCROSS[\s-]*SECTION\b"
+        r"|\bSECTION\s*(?:ON\s*)?[-–]?\s*['\"]?[A-Z]{1,2}['\"]?\s*[-–]\s*['\"]?[A-Z]{1,2}",
+        SECTION,
+    ),
+    (
+        r"\b(?:FRONT|REAR|BACK|SIDE|LEFT|RIGHT|NORTH|SOUTH|EAST|WEST)\s+ELEVATION\b"
+        r"|\bELEVATIONS?\b(?!\s*(?:OF\s*)?(?:BEAM|COLUMN|FOOTING))",
+        ELEVATION,
+    ),
     # CO[ULM]{2,4}N absorbs the COULMN / COLMN typos these title blocks carry.
     (
         r"\bCO[ULM]{2,4}N\b\s*(?:DETAIL|SIZE)|DETAILS?\s*OF\s*CO[ULM]{2,4}N"

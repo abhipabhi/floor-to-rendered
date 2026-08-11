@@ -10,10 +10,19 @@ import statistics
 from dataclasses import dataclass, field
 
 from . import datum
+from . import elevation
 from . import schedule
 from . import site as site_mod
 from .build3d import BuildResult, build
-from .classify import FLOOR_PLAN, LEVEL_ORDINALS, classify, level_name, project_title
+from .classify import (
+    ELEVATION,
+    FLOOR_PLAN,
+    LEVEL_ORDINALS,
+    SECTION,
+    classify,
+    level_name,
+    project_title,
+)
 from .datum import Reading
 from .extract import extract_plan
 from .models import BuildParams, LevelParams, PlanExtract, SheetInfo
@@ -166,7 +175,9 @@ def default_params(extracts: dict[str, PlanExtract]) -> BuildParams:
     return params
 
 
-def sheet_readings(ing: Ingest, sheets: list[SheetInfo]) -> list[Reading]:
+def sheet_readings(
+    ing: Ingest, sheets: list[SheetInfo], levels: list[int] | None = None
+) -> list[Reading]:
     """Everything the *non-plan* sheets state, as vertical readings.
 
     v1 classified these sheets, showed them, and then ignored them. They carry
@@ -187,6 +198,15 @@ def sheet_readings(ing: Ingest, sheets: list[SheetInfo]) -> list[Reading]:
         except Exception:  # an unreadable sheet must not stop the others
             continue
         out.extend(schedule.readings(sheet, si.id))
+        # Only elevations and sections are asked for levels. A plan's setting-out
+        # chainages look exactly like level tags — "+9'-5"", "+14'-1"" — and the
+        # only reason they are not mistaken for them is that this never runs on a
+        # plan. The datum fit rejects them anyway, because chainages rise going
+        # down the sheet and levels rise going up, but the guard is the classifier.
+        if si.kind in (ELEVATION, SECTION):
+            found = elevation.read_datum(sheet)
+            if found is not None:
+                out.extend(elevation.readings(found, si.id, levels))
     return out
 
 
@@ -209,7 +229,9 @@ def run(paths: list[str]) -> tuple[Ingest, dict[str, PlanExtract], BuildParams, 
     ing = ingest(paths)
     extracts, notes = extract_included(ing, ing.sheets)
     params = default_params(extracts)
-    notes += datum.resolve(params, sheet_readings(ing, ing.sheets))
+    notes += datum.resolve(
+        params, sheet_readings(ing, ing.sheets, sorted({e.level for e in extracts.values()}))
+    )
     datum.seed_defaults(params)
     result = build(list(extracts.values()), params, road_xy=road_xy_for(ing, extracts))
     return ing, extracts, params, result, notes

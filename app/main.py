@@ -105,7 +105,7 @@ def _reextract(state: JobState, scale: float | None = None) -> list[str]:
         state.params.levels.sort(key=lambda lp: lp.level)
     # what the structural sheets state, applied over the defaults but under
     # anything the user has pinned
-    notes += datum.resolve(state.params, sheet_readings(ing, state.sheets))  # type: ignore[arg-type]
+    notes += datum.resolve(state.params, sheet_readings(ing, state.sheets, sorted({e.level for e in extracts.values()})))  # type: ignore[arg-type]
     datum.seed_defaults(state.params)
     return notes
 

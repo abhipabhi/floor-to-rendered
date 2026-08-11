@@ -13,10 +13,21 @@ site you stage ─────────────────────�
 
 ## The one rule
 
-**A floor plan contains no vertical information.** Not one height in the output —
-plinth, floor-to-floor, sill, lintel, slab, parapet — comes from the drawings,
-because it isn't in them. Those numbers are yours, set in step 4, and the page
-says so where you type them.
+**A floor plan contains no vertical information.** It is a horizontal cut: it
+says where things are and how thick, and nothing about how tall. So no height is
+ever inferred from a plan.
+
+A drawing *set*, though, may say plenty — on the sheets that are not plans. An
+elevation or a section states its levels outright (`FIRST FLOOR LEVEL +3.60`),
+and the difference between two of them is a storey height, measured the same way
+the plan's scale is. A beam schedule states a beam depth; a foundation note
+states an excavation.
+
+So every height in the output is one of four things, and says which where you
+read it: **measured** off a sheet that states it, **derived** from a schedule or
+a note, **yours** because you typed it, or **assumed** because nothing in the set
+said otherwise. Anything you type is never overwritten by a later reading, and
+when two sheets disagree the tool reports both rather than averaging them.
 
 What the drawings *do* decide is the plan, and that is read exactly: every wall
 in the model is two parallel lines that a CAD package actually plotted. Nothing
@@ -214,6 +225,7 @@ Turn it off in step 4 if you'd rather keep sheet orientation.
 | door and window positions and widths | sill and lintel heights |
 | column positions and sizes | slab thickness |
 | room extents and names | plinth height |
+| storey heights, where an elevation or section states its levels | every height on a set with no elevation |
 | railing positions and lengths | parapet and railing heights |
 | stair position, going, flight width and tread count | the riser — derived from the storey height, not measured |
 | the drawing scale | roof type |

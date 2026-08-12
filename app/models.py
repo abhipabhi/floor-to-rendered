@@ -336,34 +336,49 @@ class FacadeParams(BaseModel):
 class SiteParams(BaseModel):
     """The setting the house is shown in. None of it is in the drawings.
 
-    The default is a street scene, not a compound: paving, a kerb and the road
-    the plan names, and nothing between the camera and the front of the house.
-    The boundary wall, trees and cars are still here and still work — they are
-    simply off, because they stood in front of the elevation, which is the one
-    thing a client is looking at.
+    The default is a street frontage, not a compound in a garden: the house
+    stands on the road the plan names, its car port opens straight onto it, and
+    a compound wall closes the frontage either side of the building. Nothing
+    stands between the camera and the front of the house — no forecourt, no
+    lawn, no trees, no parked car. Those are all still here and still work;
+    they are simply off, because each of them got in front of the elevation,
+    which is the one thing a client is looking at.
     """
 
     enabled: bool = True
     ground: bool = True
+    #: the four-sided compound with a gate. Off: it rings the house in and the
+    #: run across the front stands in the elevation.
     boundary_wall: bool = False
     boundary_height_ft: float = 6.0
     boundary_thickness_ft: float = 0.75
     gate_width_ft: float = 12.0
-    front_setback_ft: float = 9.0
+    #: the compound wall along the road only, stopping where the building
+    #: itself meets it — so the frontage is closed but the facade is not
+    road_wall: bool = True
+    road_wall_height_ft: float = 6.0
+    #: The house sits on the road, as the reference elevation shows it. Any
+    #: setback here becomes paving in front of the elevation.
+    front_setback_ft: float = 0.0
     side_setback_ft: float = 8.0
     verge_ft: float = 10.0
     #: a lawn round the plot. Off by default: the reference elevation puts the
-    #: house on the street with paving to the kerb, and grass between the camera
-    #: and the front of the building is the thing nobody asked for.
+    #: house on the street, and grass between the camera and the front of the
+    #: building is the thing nobody asked for.
     lawn: bool = False
+    #: paving between the house and the kerb. Off: with the house on the road
+    #: there is nothing for it to cover, and it read as a patio.
+    forecourt: bool = False
     driveway: bool = False
     trees: int = 0
     tree_height_ft: float = 14.0
     cars: int = 0
-    # the street in front: forecourt paving, a kerb, and the carriageway
+    # the street in front: its footpath, kerb and carriageway. The footpath is
+    # part of the street, not of the plot — it runs the length of the road past
+    # the frontage, outside the wall. That is what tells it from a forecourt.
     road: bool = True
     road_width_ft: float = 26.0
-    footpath_ft: float = 4.0
+    footpath_ft: float = 8.0
     kerb_ft: float = 0.5
 
 
@@ -409,7 +424,7 @@ class BuildParams(BaseModel):
 #: disk. Changing a default never touches a saved job — its old value is written
 #: into state.json — so without this the compound wall and the trees stayed on
 #: every set made before they were switched off, which is exactly what happened.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class JobState(BaseModel):

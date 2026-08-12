@@ -113,6 +113,15 @@ def _migrate(state: JobState) -> None:
         state.params.site.cars = fresh.cars
         state.params.site.road = fresh.road
         state.build = None
+    if state.schema_version < 4:
+        # v4 put the house on the road: no forecourt paving, no setback, and a
+        # compound wall along the frontage either side of the building.
+        fresh = SiteParams()
+        state.params.site.forecourt = fresh.forecourt
+        state.params.site.road_wall = fresh.road_wall
+        state.params.site.front_setback_ft = fresh.front_setback_ft
+        state.params.site.footpath_ft = fresh.footpath_ft
+        state.build = None
     state.schema_version = SCHEMA_VERSION
 
 

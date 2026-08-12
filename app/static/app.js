@@ -787,7 +787,10 @@ function initViewer() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.48;
+  // 1.0, not the 0.48 this was tuned at. That figure came from a time when
+  // every material was near-white and the only risk was blowing out; with a
+  // palette that has genuine darks in it, 0.48 crushes them to black.
+  renderer.toneMappingExposure = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   host.append(renderer.domElement);
 
@@ -807,6 +810,14 @@ function initViewer() {
   scene3.add(ctx);
 
   camera = new THREE.PerspectiveCamera(36, 1, 0.1, 6000);
+  // Stand it off the target before OrbitControls ever sees it. The render loop
+  // below starts immediately and keeps calling controls.update() while the glb
+  // is still downloading; with the camera and the target both at the origin the
+  // offset between them is zero, the spherical coordinates come out NaN, and
+  // that NaN stays in the controls' internal state for good — every later
+  // camera.position.set() is undone on the next update and the viewer renders
+  // black with nothing in the console to say why.
+  camera.position.set(30, 20, 30);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI * 0.495;

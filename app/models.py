@@ -381,10 +381,18 @@ class BuildParams(BaseModel):
         return None
 
 
+#: Bumped when a *default* changes in a way that ought to reach jobs already on
+#: disk. Changing a default never touches a saved job — its old value is written
+#: into state.json — so without this the compound wall and the trees stayed on
+#: every set made before they were switched off, which is exactly what happened.
+SCHEMA_VERSION = 3
+
+
 class JobState(BaseModel):
     id: str
     created: str
     title: str = ""
+    schema_version: int = 0  # 0 = saved before versioning; see storage.load_state
     sheets: list[SheetInfo] = Field(default_factory=list)
     extracts: dict[str, PlanExtract] = Field(default_factory=dict)  # sheet_id → extract
     params: BuildParams = Field(default_factory=BuildParams)

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from . import datum
 from .errors import AppError, not_found
-from .models import JobState
+from .models import SCHEMA_VERSION, JobState, SiteParams
 from .pdfvec import Sheet, load_sheet
 
 ROOT = os.environ.get("F2R_DATA", os.path.join(os.getcwd(), "data", "jobs"))
@@ -89,7 +89,31 @@ def load_state(job_id: str) -> JobState:
     # Seeding on load rather than on migration means those jobs simply start
     # saying "assumed", which is what they always were.
     datum.seed_defaults(state.params)
+    _migrate(state)
     return state
+
+
+def _migrate(state: JobState) -> None:
+    """Bring a job saved under an older set of defaults up to date.
+
+    Only staging is touched — the things that were never measured and are not
+    a design decision the user made deliberately. Heights, materials and façade
+    panels are left exactly as they were found.
+    """
+    if state.schema_version >= SCHEMA_VERSION:
+        return
+    if state.schema_version < 3:
+        # v3 took the compound wall, the trees and the cars out of the default
+        # site, because they stand between the camera and the front of the
+        # house. A saved job keeps whatever it was built with, so it keeps them
+        # for ever unless they are cleared here.
+        fresh = SiteParams()
+        state.params.site.boundary_wall = fresh.boundary_wall
+        state.params.site.trees = fresh.trees
+        state.params.site.cars = fresh.cars
+        state.params.site.road = fresh.road
+        state.build = None
+    state.schema_version = SCHEMA_VERSION
 
 
 def list_jobs() -> list[dict]:

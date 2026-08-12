@@ -152,7 +152,7 @@ def add_boundary(scene: Scene, plot: Plot, params: SiteParams, ground_z: float) 
 
 
 def add_street(
-    scene: Scene, plot: Plot, params: SiteParams, ground_z: float
+    scene: Scene, plot: Plot, params: SiteParams, ground_z: float, ex_bounds=None
 ) -> None:
     """Footpath, kerb and carriageway along the side the plan calls ROAD.
 
@@ -170,21 +170,26 @@ def add_street(
     # bounds and pushes every camera back to fit a strip of tarmac in
     along = plot.width if plot.road in ("+y", "-y") else plot.depth
     over = along * 0.7
+    # measured off the building, so the kerb lands one setback from the front
+    # wall rather than out at the plot boundary
+    bx0, by0, bx1, by1 = ex_bounds if ex_bounds else (plot.x0, plot.y0, plot.x1, plot.y1)
     fp, kb, rw = params.footpath_ft, params.kerb_ft, params.road_width_ft
     kerb_top = ground_z + 0.5
 
     if plot.road in ("+y", "-y"):
         sign = 1 if plot.road == "+y" else -1
-        edge = plot.y1 if sign > 0 else plot.y0
-        a, b = plot.x0 - over, plot.x1 + over
+        edge = (by1 + params.front_setback_ft) if sign > 0 else (
+            by0 - params.front_setback_ft)
+        a, b = bx0 - over, bx1 + over
         _band_y(path, a, b, edge, edge + sign * fp, ground_z, kerb_top - 0.02)
         _band_y(kerb, a, b, edge + sign * fp, edge + sign * (fp + kb), ground_z, kerb_top)
         _band_y(road, a, b, edge + sign * (fp + kb), edge + sign * (fp + kb + rw),
                 ground_z - 0.02, ground_z + 0.02)
     else:
         sign = 1 if plot.road == "+x" else -1
-        edge = plot.x1 if sign > 0 else plot.x0
-        a, b = plot.y0 - over, plot.y1 + over
+        edge = (bx1 + params.front_setback_ft) if sign > 0 else (
+            bx0 - params.front_setback_ft)
+        a, b = by0 - over, by1 + over
         _band_x(path, a, b, edge, edge + sign * fp, ground_z, kerb_top - 0.02)
         _band_x(kerb, a, b, edge + sign * fp, edge + sign * (fp + kb), ground_z, kerb_top)
         _band_x(road, a, b, edge + sign * (fp + kb), edge + sign * (fp + kb + rw),
@@ -202,41 +207,41 @@ def _band_x(mesh, a: float, b: float, c0: float, c1: float, z0: float, z1: float
 def add_ground(
     scene: Scene, plot: Plot, ex_bounds, params: SiteParams, ground_z: float
 ) -> None:
-    """Lawn over the plot, paving from the gate to the building."""
-    lawn = scene.mesh("Site — ground", "ground")
-    margin = params.verge_ft
-    _box(
-        lawn,
-        plot.x0 - margin,
-        plot.y0 - margin,
-        plot.x1 + margin,
-        plot.y1 + margin,
-        ground_z - 0.5,
-        ground_z,
-    )
-    # A paved apron round the building. Without it the walls grow straight out
-    # of the lawn, which is the single clearest sign of an untreated model —
-    # real houses meet the ground on something.
+    """A paved forecourt from the house to the kerb, and the street beyond it.
+
+    Not a lawn with a path across it. The reference elevation puts the house
+    almost on the boundary: paving runs from the front wall straight out to the
+    kerb, and the road starts there. A lawn and a winding path read as a
+    suburban plot, push the building away from the street, and put grass
+    between the camera and the elevation — which is the thing being sold.
+    """
     bx0, by0, bx1, by1 = ex_bounds
-    apron = scene.mesh("Site — apron", "drive")
-    _box(apron, bx0 - 3.0, by0 - 3.0, bx1 + 3.0, by1 + 3.0, ground_z, ground_z + 0.06)
+    forecourt = scene.mesh("Site — forecourt", "drive")
+    over = params.side_setback_ft
+
+    # everything between the building and the kerb, the full width of the plot
+    reach = params.front_setback_ft
+    if plot.road == "+y":
+        _box(forecourt, bx0 - over, by0 - over, bx1 + over, by1 + reach,
+             ground_z, ground_z + 0.06)
+    elif plot.road == "-y":
+        _box(forecourt, bx0 - over, by0 - reach, bx1 + over, by1 + over,
+             ground_z, ground_z + 0.06)
+    elif plot.road == "+x":
+        _box(forecourt, bx0 - over, by0 - over, bx1 + reach, by1 + over,
+             ground_z, ground_z + 0.06)
+    else:
+        _box(forecourt, bx0 - reach, by0 - over, bx1 + over, by1 + over,
+             ground_z, ground_z + 0.06)
+
+    if params.lawn:
+        margin = params.verge_ft
+        lawn = scene.mesh("Site — lawn", "ground")
+        _box(lawn, plot.x0 - margin, plot.y0 - margin, plot.x1 + margin,
+             plot.y1 + margin, ground_z - 0.5, ground_z - 0.01)
 
     if params.road:
-        add_street(scene, plot, params, ground_z)
-
-    if not params.driveway:
-        return
-    drive = scene.mesh("Site — driveway", "drive")
-    a = plot.drive_from - plot.drive_width / 2
-    b = plot.drive_from + plot.drive_width / 2
-    if plot.road == "+y":
-        _box(drive, a, by1 - 1.0, b, plot.y1 + margin, ground_z, ground_z + 0.05)
-    elif plot.road == "-y":
-        _box(drive, a, plot.y0 - margin, b, by0 + 1.0, ground_z, ground_z + 0.05)
-    elif plot.road == "+x":
-        _box(drive, bx1 - 1.0, a, plot.x1 + margin, b, ground_z, ground_z + 0.05)
-    else:
-        _box(drive, plot.x0 - margin, a, bx0 + 1.0, b, ground_z, ground_z + 0.05)
+        add_street(scene, plot, params, ground_z, ex_bounds)
 
 
 def add_tree(scene: Scene, x: float, y: float, height_ft: float, seed: int) -> None:

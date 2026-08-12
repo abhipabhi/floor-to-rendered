@@ -349,17 +349,21 @@ class SiteParams(BaseModel):
     boundary_height_ft: float = 6.0
     boundary_thickness_ft: float = 0.75
     gate_width_ft: float = 12.0
-    front_setback_ft: float = 16.0
+    front_setback_ft: float = 9.0
     side_setback_ft: float = 8.0
     verge_ft: float = 10.0
-    driveway: bool = True
+    #: a lawn round the plot. Off by default: the reference elevation puts the
+    #: house on the street with paving to the kerb, and grass between the camera
+    #: and the front of the building is the thing nobody asked for.
+    lawn: bool = False
+    driveway: bool = False
     trees: int = 0
     tree_height_ft: float = 14.0
     cars: int = 0
     # the street in front: forecourt paving, a kerb, and the carriageway
     road: bool = True
     road_width_ft: float = 26.0
-    footpath_ft: float = 5.0
+    footpath_ft: float = 4.0
     kerb_ft: float = 0.5
 
 

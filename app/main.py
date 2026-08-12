@@ -539,6 +539,7 @@ def get_facade(job_id: str) -> dict:
         },
         "panels": [p.model_dump() for p in panels],
         "params": state.params.facade.model_dump(),
+        "arrangements": facade_mod.ARRANGEMENTS,
         "svg": elevdoc.to_svg(drawing),
         "kinds": facade_mod.KIND_ORDER,
     }

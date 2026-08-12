@@ -83,8 +83,63 @@ def _composed(gf_extract, ff_extract, **kw):
 def test_the_composition_uses_the_document_vocabulary(gf_extract, ff_extract):
     _f, panels, _p = _composed(gf_extract, ff_extract)
     kinds = {p.kind for p in panels}
-    for want in ("field", "band", "frame", "clad", "fin", "canopy"):
+    for want in ("field", "recess", "mass", "fin", "frame", "canopy"):
         assert want in kinds, want
+
+
+@needs_example
+def test_the_elements_stack_in_a_depth_ladder(gf_extract, ff_extract):
+    """A facade reads as layers or it reads as wallpaper. The screen stands in
+    front of the canopy, the canopy in front of the balcony slabs, those in
+    front of the clad mass, and the mass in front of the wall. Flatten that
+    ladder and no amount of colour brings the composition back."""
+    _f, panels, _p = _composed(gf_extract, ff_extract)
+    depth = {}
+    for p in panels:
+        depth[p.kind] = max(depth.get(p.kind, -99), p.depth_ft)
+    assert depth["field"] == 0.0
+    assert depth["recess"] < 0, "a recess goes back, not forward"
+    assert depth["mass"] > depth["band"] > depth["field"]
+    assert depth["fin"] > depth["mass"]
+    assert depth["canopy"] > depth["fin"]
+
+
+@needs_example
+def test_the_composition_is_asymmetric(gf_extract, ff_extract):
+    """The reference elevations put their weight on one side. A screen and a
+    clad bay sitting on top of each other is not a composition."""
+    _f, panels, _p = _composed(gf_extract, ff_extract)
+    fins = [p for p in panels if p.kind == "fin"]
+    mass = [p for p in panels if p.kind == "mass"]
+    assert fins and mass
+    fin_mid = sum((p.u0 + p.u1) / 2 for p in fins) / len(fins)
+    mass_mid = sum((p.u0 + p.u1) / 2 for p in mass) / len(mass)
+    assert abs(fin_mid - mass_mid) > 6.0, "the two heavy elements must sit apart"
+
+
+@needs_example
+def test_the_screen_runs_past_the_canopy(gf_extract, ff_extract):
+    """It is the one element tying the whole height together; stopped at the
+    roof it becomes a stripe."""
+    f, panels, _p = _composed(gf_extract, ff_extract)
+    fins = [p for p in panels if p.kind == "fin"]
+    assert min(p.z0 for p in fins) <= f.z_ground + 0.1
+    assert max(p.z1 for p in fins) > f.z_top
+
+
+@needs_example
+@pytest.mark.parametrize("arrangement", ["layered", "framed", "quiet"])
+def test_every_arrangement_composes(gf_extract, ff_extract, arrangement):
+    _f, panels, _p = _composed(gf_extract, ff_extract, arrangement=arrangement)
+    assert len(panels) >= 3
+    assert all(p.u1 > p.u0 and p.z1 > p.z0 for p in panels)
+
+
+@needs_example
+def test_the_quiet_arrangement_leaves_nothing_sticking_out(gf_extract, ff_extract):
+    _f, panels, _p = _composed(gf_extract, ff_extract, arrangement="quiet")
+    assert not any(p.kind in ("fin", "mass") for p in panels)
+    assert max(p.depth_ft for p in panels) < 2.0
 
 
 @needs_example

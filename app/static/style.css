@@ -270,3 +270,9 @@ table.slots select { width: 100%; }
                          padding: 4px 6px; border-bottom: 1px solid var(--line); }
 .facade-side .slots td { padding: 5px 6px; border-bottom: 1px solid var(--line);
                          vertical-align: middle; }
+.arrangements { display: grid; gap: 6px; margin-bottom: 12px; }
+.arrangements .arr { text-align: left; background: var(--panel); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+  font: inherit; color: var(--ink); }
+.arrangements .arr.on { border-color: var(--accent); background: var(--accent-soft); }
+.arrangements .arr strong { text-transform: capitalize; font-weight: 600; }

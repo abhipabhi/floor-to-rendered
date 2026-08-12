@@ -34,31 +34,53 @@ from .mesh import Scene
 from .models import FacadeParams, Panel, PlanExtract
 from .units import FT_TO_M
 
-#: panel kinds, in the order they are drawn — later ones sit in front
-KIND_ORDER = ["field", "recess", "clad", "band", "fin", "frame", "canopy", "pier"]
+#: panel kinds, back to front — the order they are drawn in
+KIND_ORDER = [
+    "field", "recess", "clad", "band", "mass", "slab", "frame", "post", "fin", "canopy",
+    "pier",
+]
 
 #: which finish slot each kind wears, following the document's palette roles
 KIND_MATERIAL = {
     "field": "wall_ext",    # light grey — main wall finish
-    "recess": "accent",     # dark grey — accent bands, vertical elements
+    "recess": "accent",     # dark grey — the shadow behind everything
     "clad": "clad",         # teak — vertical cladding
-    "fin": "clad",          # teak — the vertical fins
+    "mass": "clad",         # teak — the projecting bay
+    "fin": "clad",          # teak — the screen blades
     "band": "trim",         # warm white — horizontal bands
+    "slab": "trim",         # warm white — balcony soffit and top
     "frame": "trim",        # warm white — box frames
-    "canopy": "accent",     # dark grey — the roof canopy
+    "post": "accent",       # dark grey — the canopy's slim supports
+    "canopy": "accent",     # dark grey — the roof plane
     "pier": "accent",
 }
 
-#: default projection depths in feet, read off the document's own lvl tags
+#: Default projection in feet — the ``lvl`` the document writes on each area.
+#: These are a *ladder*, not a set of independent numbers: the screen stands in
+#: front of the canopy, the canopy in front of the balcony slabs, those in front
+#: of the clad mass, and the mass in front of the wall. Flatten the ladder and
+#: the elevation stops reading as layers however good the colours are.
 DEPTH = {
     "field": 0.0,
-    "recess": -0.35,   # set back, not proud
-    "clad": 0.35,
-    "band": 0.50,
-    "frame": 0.65,
-    "fin": 1.00,
+    "recess": -0.55,   # set back into shadow
+    "clad": 0.30,
+    "band": 0.40,
+    "mass": 1.30,
+    "slab": 1.55,
+    "frame": 0.55,     # measured from whatever it sits on, added below
+    "post": 1.90,
+    "fin": 2.00,
     "canopy": 3.15,    # the document writes lvl +3'2" on the top slab
     "pier": 0.75,
+}
+
+#: The arrangements on offer. Each is the same vocabulary in a different order,
+#: because a facade is a composition and one composition does not suit every
+#: plan — or every client.
+ARRANGEMENTS = {
+    "layered": "Screen, recessed balcony and a projecting clad bay",
+    "framed": "A clad bay each side of a recessed centre",
+    "quiet": "Bands and box frames only — no screen, no projecting bay",
 }
 
 
@@ -208,89 +230,163 @@ def compose(
     floors = sorted(elevations)
     base_of = {lv: elevations[lv][0] for lv in floors}
     roof = frame.z_top
+    upper = base_of[floors[1]] if len(floors) > 1 else base_of[floors[0]] + 10.0
+    openings = front_openings(extracts, elevations, frame, params)
+    ground_ops = [o for o in openings if o[2] < upper - 1.0]
+    upper_ops = [o for o in openings if o[2] >= upper - 1.0]
 
     # the wall itself, so the elevation drawing has a ground to sit on
     add("field", u0, u1, frame.z_ground, roof, label="Main wall")
 
-    # a horizontal band at every floor line: the strongest ordering device on
-    # the document's renders, and the thing that ties the composition together
+    if fp.arrangement == "quiet":
+        _quiet(add, frame, fp, floors, base_of, roof, openings)
+        panels.sort(key=lambda p: KIND_ORDER.index(p.kind))
+        return panels
+
+    # ---- decide the three zones ------------------------------------------
+    # The clad mass goes round the best upper-floor window, because that is the
+    # element it exists to frame. The screen then stands at whichever end is
+    # further from it, so the two heavy elements sit apart rather than fighting.
+    span = u1 - u0
+    if upper_ops:
+        feature = max(upper_ops, key=lambda o: (o[1] - o[0]) * (o[3] - o[2]))
+        fx0, fx1 = feature[0], feature[1]
+    else:
+        fx0, fx1 = u0 + span * 0.58, u0 + span * 0.88
+    pad = max(1.6, span * 0.055)
+    mass0, mass1 = max(u0, fx0 - pad), min(u1, fx1 + pad)
+
+    side = fp.screen_side
+    if side == "auto":
+        # whichever end has more wall left over — the screen and the clad bay
+        # are the two heavy elements, and they have to sit apart or they read
+        # as one lump. Picking the *narrower* side lands them on top of
+        # each other, which is what the first version of this did.
+        side = "left" if (mass0 - u0) > (u1 - mass1) else "right"
+    sw = min(fp.screen_width_ft, span * 0.22)
+    if side == "left":
+        scr0, scr1 = u0, u0 + sw
+        void0, void1 = scr1, mass0
+    else:
+        scr0, scr1 = u1 - sw, u1
+        void0, void1 = mass1, scr0
+
+    if fp.arrangement == "framed":
+        # a clad bay at each end, the recess in the middle
+        other0, other1 = (u1 - (mass1 - mass0), u1) if side == "left" else (
+            u0, u0 + (mass1 - mass0))
+        void0, void1 = min(mass1, other1), max(mass0, other0)
+        if void1 - void0 < span * 0.15:
+            void0, void1 = u0 + span * 0.38, u0 + span * 0.62
+
+    # ---- the recessed void, and its slabs ---------------------------------
+    if fp.void and void1 - void0 > span * 0.12:
+        add("recess", void0, void1, upper - 1.2, roof - 0.4,
+            depth=-fp.void_depth_ft, label="Balcony recess")
+        # the white soffit under it and the parapet edge in front of it, which
+        # is what gives the void its depth in a straight-on view
+        add("slab", void0, void1, upper - 1.2, upper + 0.1, label="Balcony soffit")
+        add("slab", void0, void1, roof - 1.5, roof - 0.4, label="Balcony head")
+        add("slab", void0, void1, upper + 2.4, upper + 3.3, label="Balcony edge")
+
+    # ---- the projecting clad mass -----------------------------------------
+    if fp.mass and mass1 - mass0 > 1.0:
+        # a dark joint under it, so it reads as sitting on the wall not in it
+        add("recess", mass0 - 0.35, mass1 + 0.35, upper - 1.3, upper,
+            depth=-0.3, label="Shadow joint")
+        add("mass", mass0, mass1, upper, roof - 0.5,
+            depth=fp.mass_projection_ft, label="Clad bay")
+        if fp.box_frames and upper_ops:
+            a, b, z0, z1 = feature[0], feature[1], feature[2], feature[3]
+            m = fp.frame_margin_ft
+            add("frame", a - m, b + m, z0 - m, z1 + m, hole=(a, b, z0, z1),
+                depth=fp.mass_projection_ft + DEPTH["frame"], label="Bay window frame")
+
+    # ---- the screen ---------------------------------------------------------
+    if fp.fins and sw > 0.8:
+        top = roof + fp.canopy_thickness_ft + 0.6
+        # A backing panel behind the blades, but only as high as the building
+        # goes. Without it the screen is a handful of poles standing in front of
+        # nothing; with it, it reads as a screen — which is the whole point of
+        # the element.
+        add("clad", scr0, scr1, frame.z_ground, roof, depth=0.25,
+            label="Screen backing")
+        add("recess", scr0, scr1, upper, roof, depth=-0.25, label="Screen shadow")
+        _fins(add, scr0, scr1, frame.z_ground, top, fp)
+
+    # ---- the canopy, on posts ----------------------------------------------
+    if fp.canopy:
+        add("canopy", u0 - fp.canopy_side_ft, u1 + fp.canopy_side_ft,
+            roof, roof + fp.canopy_thickness_ft,
+            depth=fp.canopy_projection_ft, label="Roof canopy")
+        # slim posts carrying its far edge, at the end away from the screen
+        px = mass1 - 0.9 if side == "left" else mass0 + 0.3
+        for i in range(3):
+            c = px + i * 0.75
+            add("post", c, c + 0.32, upper + 2.0, roof,
+                depth=DEPTH["post"],
+                label="Canopy post" if i == 0 else "")
+
+    # ---- everything that is left is plain wall, banded and framed ----------
     if fp.bands:
         for lv in floors[1:]:
             z = base_of[lv]
-            add("band", u0, u1, z - fp.band_height_ft * 0.5,
-                z + fp.band_height_ft * 0.5, label=f"Band at {lv}")
+            for a, b in _gaps(u0, u1, [(mass0, mass1), (scr0, scr1), (void0, void1)]):
+                add("band", a, b, z - fp.band_height_ft * 0.5,
+                    z + fp.band_height_ft * 0.5, label="Floor band")
 
-    # the entrance bay: a full-height slot of cladding with fins in front of it,
-    # placed over the widest ground-floor opening, which is the way in
-    openings = front_openings(extracts, elevations, frame, params)
-    ground = [o for o in openings if o[2] < base_of[floors[0]] + 6.0]
-    if fp.entrance_bay and ground:
-        widest = max(ground, key=lambda o: o[1] - o[0])
-        cx = (widest[0] + widest[1]) / 2
-        half = max(fp.bay_width_ft, (widest[1] - widest[0]) * 0.75) / 2
-        bx0, bx1 = max(u0, cx - half), min(u1, cx + half)
-        add("recess", bx0, bx1, frame.z_ground, roof, label="Entrance recess")
-        add("clad", bx0, bx1, frame.z_ground, roof, label="Entrance cladding",
-            depth=DEPTH["clad"])
-        # Fins start at the floor above, never at the ground. Run to grade they
-        # stand across the front door, which is where people walk in.
-        fin_base = base_of[floors[1]] if len(floors) > 1 else (
-            base_of[floors[0]] + 8.0
-        )
-        if fp.fins:
-            _fins(add, bx0, bx1, fin_base, roof, fp)
-
-    # a cladding panel on the widest run of blank wall, so the facade is not
-    # one material end to end
-    if fp.clad_panel:
-        gap = _widest_gap(u0, u1, [(o[0], o[1]) for o in openings], keep_out=1.5)
-        if gap and gap[1] - gap[0] > 3.0:
-            gx0, gx1 = gap
-            top_floor = floors[-1]
-            add("clad", gx0, gx1, base_of[top_floor] - fp.band_height_ft,
-                roof - 0.4, label="Feature cladding")
-
-    # box frames: a warm white surround standing proud of every opening on the
-    # face. The single most recognisable move on the reference elevations.
     if fp.box_frames:
         m = fp.frame_margin_ft
-        for a, b, z0, z1, _kind in openings:
-            add("frame", a - m, b + m, z0 - m, z1 + m, label="Box frame",
-                hole=(a, b, z0, z1))
-
-    # the canopy: a deep dark slab across the top, the document's lvl +3'2"
-    if fp.canopy:
-        add("canopy", u0 - fp.canopy_side_ft, u1 + fp.canopy_side_ft,
-            roof - fp.canopy_depth_ft, roof + fp.canopy_thickness_ft,
-            depth=fp.canopy_projection_ft, label="Roof canopy")
+        for a, b, z0, z1, _kind in ground_ops + (
+            [o for o in upper_ops if not (mass0 <= o[0] and o[1] <= mass1)]
+        ):
+            if scr0 - 0.3 <= a and b <= scr1 + 0.3:
+                continue  # behind the screen; a frame there is never seen
+            add("frame", a - m, b + m, z0 - m, z1 + m, hole=(a, b, z0, z1),
+                label="Box frame")
 
     panels.sort(key=lambda p: KIND_ORDER.index(p.kind))
     return panels
 
 
+def _quiet(add, frame, fp, floors, base_of, roof, openings) -> None:
+    """The restrained arrangement: bands and frames, nothing projecting far."""
+    for lv in floors[1:]:
+        z = base_of[lv]
+        add("band", frame.u0, frame.u1, z - fp.band_height_ft * 0.5,
+            z + fp.band_height_ft * 0.5, label="Floor band")
+    m = fp.frame_margin_ft
+    for a, b, z0, z1, _k in openings:
+        add("frame", a - m, b + m, z0 - m, z1 + m, hole=(a, b, z0, z1),
+            label="Box frame")
+    if fp.canopy:
+        add("canopy", frame.u0 - 0.5, frame.u1 + 0.5, roof, roof + 0.7,
+            depth=1.4, label="Roof band")
+
+
+def _gaps(u0: float, u1: float, taken):
+    """The stretches of face left over once the big elements have their bays."""
+    blocks = sorted((max(u0, a), min(u1, b)) for a, b in taken if b > a)
+    out, cursor = [], u0
+    for a, b in blocks:
+        if a - cursor > 0.6:
+            out.append((cursor, a))
+        cursor = max(cursor, b)
+    if u1 - cursor > 0.6:
+        out.append((cursor, u1))
+    return out
+
+
 def _fins(add, u0: float, u1: float, z0: float, z1: float, fp: FacadeParams) -> None:
     """A row of vertical timber fins across a bay."""
     span = u1 - u0
-    pitch = max(0.6, fp.fin_pitch_ft)
+    pitch = max(0.45, fp.fin_pitch_ft)
     count = max(2, int(span / pitch))
     step = span / count
     for i in range(count):
         c = u0 + step * (i + 0.5)
         add("fin", c - fp.fin_width_ft / 2, c + fp.fin_width_ft / 2, z0, z1,
             label="Fin" if i == 0 else "")
-
-
-def _widest_gap(u0: float, u1: float, taken, keep_out: float):
-    """The widest stretch of face with no opening on it."""
-    blocks = sorted((max(u0, a - keep_out), min(u1, b + keep_out)) for a, b in taken)
-    best, cursor = None, u0
-    for a, b in blocks:
-        if a - cursor > (best[1] - best[0] if best else 0):
-            best = (cursor, a)
-        cursor = max(cursor, b)
-    if u1 - cursor > (best[1] - best[0] if best else 0):
-        best = (cursor, u1)
-    return best
 
 
 # --------------------------------------------------------------------------- #

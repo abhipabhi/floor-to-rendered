@@ -263,18 +263,28 @@ TARGET_MEAN = 0.72
 
 
 def normalise(rgb: np.ndarray, target: float = TARGET_MEAN) -> np.ndarray:
-    """Scale a texture to a standard brightness, keeping its hue and grain.
+    """Turn a texture into grain: its pattern, at a standard brightness, no hue.
 
-    Scaled in linear light, since that is where the multiply happens. Only ever
-    brightens — a texture already lighter than the target is left alone, so the
-    plasters and concretes come through untouched.
+    A texture and a base colour multiply, so if both carry colour they fight.
+    Teak #8B5E3C over a wood grain that is itself brown came out almost black;
+    brightening both to compensate sent it bright orange, because scaling a
+    saturated colour up clips the red channel first and the hue swings.
+
+    So exactly one of the two carries the colour, and it is the palette — which
+    is the whole premise of a document that names four hexes. The texture keeps
+    its pattern and its relative light and shade, converted to luminance and
+    centred on ``target``, and the material colour comes through as stated.
     """
     lin = _to_linear(rgb / 255.0)
-    mean = float(lin.mean())
-    if mean <= 1e-4 or mean >= target:
+    lum = lin @ np.array([0.2126, 0.7152, 0.0722])
+    mean = float(lum.mean())
+    if mean <= 1e-4:
         return rgb
-    lin = np.clip(lin * (target / mean), 0.0, 1.0)
-    return np.clip(_to_srgb(lin) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    # keep the contrast the pattern had, just recentred — a flat grey texture
+    # is no texture at all
+    lum = np.clip(lum * (target / mean), 0.0, 1.0)
+    out = np.repeat(lum[:, :, None], 3, axis=2)
+    return np.clip(_to_srgb(out) * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 
 def _to_linear(c: np.ndarray) -> np.ndarray:

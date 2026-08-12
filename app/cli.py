@@ -11,6 +11,7 @@ import json
 import os
 import sys
 
+from . import sky as sky_mod
 from .blender import blender_script
 from .build3d import build
 from .glb import write_glb
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--floor-to-floor", type=float, default=None, help="feet")
     ap.add_argument("--plinth", type=float, default=None, help="feet")
     ap.add_argument("--parapet", type=float, default=None, help="feet")
+    ap.add_argument("--sky", default=None, choices=sorted(sky_mod.SKIES),
+                    help="the light to show the model in")
     args = ap.parse_args(argv)
 
     pdfs = collect(args.inputs)
@@ -58,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{n}")
 
     params = default_params(extracts)
+    if args.sky:
+        params.sky = args.sky
     for lp in params.levels:
         if args.floor_to_floor:
             lp.floor_to_floor_ft = args.floor_to_floor
@@ -103,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
                 bool(result.summary.get("rotation_applied_deg") is not None),
                 storeys=[lv["name"] for lv in result.summary.get("levels", [])],
                 facade_normal_xz=(result.summary.get("facade") or {}).get("normal_xz"),
+                sky=params.sky,
             )
         )
     with open(os.path.join(args.out, "model.json"), "w") as fh:

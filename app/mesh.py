@@ -27,6 +27,10 @@ class Material:
     metallic: float = 0.0
     roughness: float = 0.85
     alpha: float = 1.0
+    #: how brightly the surface glows, as a multiple of its own colour. A lamp
+    #: is not a light-coloured surface — it is a surface that is *emitting*, and
+    #: without this a light fitting in a daylit render is a grey blob.
+    emissive: float = 0.0
     texture: str | None = None  # id in app.textures
     tile_m: float = 1.0  # metres covered by one repeat of the texture
 

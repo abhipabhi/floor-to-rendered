@@ -62,6 +62,7 @@ def write_mtl(scene: Scene) -> str:
             f"{0.1 + 0.6 * m.metallic:.4f}",
             f"Ns {max(1.0, (1.0 - m.roughness) * 200):.1f}",
             f"d {m.alpha:.3f}",
+            f"Ke {r * m.emissive:.4f} {g * m.emissive:.4f} {b * m.emissive:.4f}",
             "illum 2",
         ]
         if m.texture and m.texture in tex.GENERATORS:

@@ -16,6 +16,7 @@ from . import storage
 from .blender import blender_script
 from .build3d import build, level_elevations
 from . import site as site_mod
+from . import sky as sky_mod
 from . import textures as tex
 from .classify import FLOOR_PLAN, KIND_LABELS, level_name
 from .finish import PRESETS, SLOTS
@@ -469,6 +470,7 @@ def build_model(job_id: str) -> dict:
             True,
             storeys=[lv["name"] for lv in result.summary.get("levels", [])],
             facade_normal_xz=(result.summary.get("facade") or {}).get("normal_xz"),
+            sky=state.params.sky,
         ),
         "model.json": _json.dumps(
             {
@@ -602,6 +604,7 @@ def catalog() -> dict:
         "frame": ["none", "metal", "wood"],
         "door": ["wood", "metal", "none"],
         "glazing": ["none"],
+        "curtain": ["none"],
         "railing": ["none", "metal"],
         "ground": tex.GROUND_TEXTURES,
         "drive": ["paving", "asphalt", "concrete", "none"],
@@ -614,6 +617,7 @@ def catalog() -> dict:
         "presets": {k: {"label": v["label"], "note": v["note"], "slots": v["slots"]}
                     for k, v in PRESETS.items()},
         "textures": per_slot,
+        "skies": sky_mod.choices(),
     }
 
 

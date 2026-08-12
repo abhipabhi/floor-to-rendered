@@ -37,13 +37,14 @@ from .units import FT_TO_M
 #: panel kinds, back to front — the order they are drawn in
 KIND_ORDER = [
     "field", "recess", "clad", "band", "mass", "slab", "frame", "post", "fin", "canopy",
-    "pier",
+    "pier", "lamp",
 ]
 
 #: Kinds that are fixed to a wall, and only exist where the building has one.
 #: Everything else — the canopy and the screen — is a structure standing off
 #: the building, and spans whether there is wall behind it or not.
-WALL_MOUNTED = {"recess", "clad", "band", "slab", "mass", "frame", "pier", "post"}
+WALL_MOUNTED = {"recess", "clad", "band", "slab", "mass", "frame", "pier",
+                "post", "lamp"}
 
 #: Kinds that step with the wall in **height** as well as in width. A full
 #: height clad panel on a building whose upper storey comes forward has to step
@@ -63,6 +64,7 @@ KIND_MATERIAL = {
     "slab": "trim",         # warm white — balcony soffit and top
     "frame": "trim",        # warm white — box frames
     "post": "trim",         # warm white — slim supports, read against the dark
+    "lamp": "light",        # a wall light: emissive, so it reads as lit
     "canopy": "accent",     # dark grey — the roof plane
     "pier": "accent",
 }
@@ -81,19 +83,20 @@ DEPTH = {
     "slab": 1.55,
     "frame": 0.55,     # measured from whatever it sits on, added below
     "post": 0.45,      # standing at the face of the overhang it carries
+    "lamp": 0.30,      # a slim box on the wall
     "fin": 2.00,
     "canopy": 3.15,    # the document writes lvl +3'2" on the top slab
     "pier": 0.75,
 }
 
-#: The arrangements on offer. Each is the same vocabulary in a different order,
-#: because a facade is a composition and one composition does not suit every
-#: plan — or every client.
 #: Kinds that are a solid area of finish. A window behind one of these has to
 #: be cut out of it; a fin or a post standing over one is a screen, which is
 #: the point of a screen.
 SOLID = {"clad", "mass", "recess", "band", "slab", "pier"}
 
+#: The arrangements on offer. Each is the same vocabulary in a different order,
+#: because a facade is a composition and one composition does not suit every
+#: plan — or every client.
 ARRANGEMENTS = {
     "layered": "Screen, recessed balcony and a projecting clad bay",
     "framed": "A clad bay each side of a recessed centre",
@@ -611,9 +614,54 @@ def compose(
             add("frame", a - m, b + m, z0 - m, z1 + m, hole=(a, b, z0, z1),
                 label="Box frame")
 
+    if fp.lamps:
+        _lamps(add, frame, fp, solid, porches, ground_ops, upper, base_of[floors[0]])
+
     panels = _unblock(panels, openings)
     panels.sort(key=lambda p: KIND_ORDER.index(p.kind))
     return panels
+
+
+def _lamps(add, frame: Frame, fp, zones_: list[Zone], porches, ground_ops,
+           upper: float, plinth: float) -> None:
+    """Wall lights, where a house actually has them.
+
+    Not sprinkled along the wall at even spacing — that reads as a car park.
+    A house has a light either side of the way in, one in the porch, and a
+    pair washing the upper wall. They are emissive, so they read as fittings
+    in daylight and as the only warm thing in the picture at dusk.
+    """
+    w, h = fp.lamp_width_ft, fp.lamp_height_ft
+    at = fp.lamp_height_above_floor_ft
+
+    def pair(centre: float, gap: float, z: float, label: str) -> None:
+        for i, u in enumerate((centre - gap / 2, centre + gap / 2)):
+            add("lamp", u - w / 2, u + w / 2, z, z + h,
+                label=label if i == 0 else "")
+
+    # either side of the front door, or of the widest ground-floor opening —
+    # which is the way in on a plan that did not label its door
+    if ground_ops:
+        door = max((o for o in ground_ops if o[4] == "door"), default=None,
+                   key=lambda o: o[1] - o[0])
+        if door is None:
+            door = max(ground_ops, key=lambda o: (o[1] - o[0]) * (o[3] - o[2]))
+        mid = (door[0] + door[1]) / 2
+        pair(mid, (door[1] - door[0]) + 2.2, plinth + at, "Entrance light")
+
+    # one at the head of each porch, under the overhang it is cut back from
+    for zn, foot, head in porches:
+        for a, b in _open_runs(frame, zn, foot, head):
+            if b - a < 3.0:
+                continue
+            pair((a + b) / 2, (b - a) * 0.62, min(head - 1.6, foot + at + 2.0),
+                 "Porch light")
+
+    # and a pair on the upper wall, on whichever zone is widest up there
+    tall = [z for z in zones_ if z.top >= frame.z_top - 1.0]
+    if tall:
+        z = max(tall, key=lambda t: t.width)
+        pair(z.mid, min(z.width * 0.55, 11.0), upper + at, "Facade light")
 
 
 def _widest_free(zs: list[Zone], taken) -> tuple[Zone, float, float] | None:

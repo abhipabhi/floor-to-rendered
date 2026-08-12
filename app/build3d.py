@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from . import facade as facade_mod
 from . import site as site_mod
+from . import sky as sky_mod
 from .finish import materials_for
 from .footprint import footprint_rects, ring_rects
 from .mesh import Scene
@@ -107,6 +108,8 @@ def add_wall(
         if o.kind == "window" and params.glazing:
             pane = scene.mesh(glazing_group, "glazing")
             _inset(pane, wall, a, b, z0, z1, outer, normal, set_back, 0.06)
+            if d.enabled and d.curtains:
+                _curtains(scene, wall, a, b, z0, z1, outer, normal, d, group)
         elif o.kind == "door" and params.doors:
             leaf = scene.mesh(door_group, "door")
             _inset(leaf, wall, a, b, z0, z1, outer, normal, set_back, 0.12)
@@ -148,6 +151,66 @@ def _inset(mesh, wall: Wall, a: float, b: float, z0: float, z1: float,
            outer: float, normal: float, set_back: float, thick: float) -> None:
     face = outer - normal * set_back
     _box_across(mesh, wall, a, b, z0, z1, face, face - normal * thick)
+
+
+#: how many folds a curtain is gathered into, per foot of window
+CURTAIN_FOLDS_PER_FT = 1.15
+#: how deep a fold is, as a fraction of the fold's own width
+CURTAIN_FOLD_DEPTH = 0.55
+
+
+def _curtains(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float,
+              outer: float, normal: float, d, group: str) -> None:
+    """A curtain drawn across the window, gathered into vertical folds.
+
+    Drawn, not tied back. The job is to close the opening: an empty window is a
+    hole into an unmodelled interior, and the eye goes straight to it. Tied back
+    at the sides it looks better as a curtain and does not do the job, because
+    the middle — the part you actually see through — is still a hole.
+
+    The folds are what stop it reading as a flat blue card. Each is a shallow
+    V in plan, so the light catches one side of every fold and not the other,
+    which is all the shading needed at this scale. It hangs *inside*, behind
+    the reveal and the glass.
+    """
+    span, height = b - a, z1 - z0
+    if span < 0.9 or height < 1.2:
+        return
+    m = scene.mesh(f"{group} curtains", "curtain")
+    # behind the pane and behind the reveal, hanging in the room
+    front = outer - normal * (d.reveal_ft + 0.22)
+    depth = min(0.30, span * 0.12)
+
+    folds = max(3, int(round(span * CURTAIN_FOLDS_PER_FT)))
+    step = span / folds
+    zag = min(depth * CURTAIN_FOLD_DEPTH, step * 0.45)
+
+    def p(u: float, z: float, c: float):
+        """A point, from the wall's own along/height/across axes into model xyz."""
+        return (u, z, c) if wall.axis == "h" else (c, z, u)
+
+    across = (0.0, 0.0, 1.0) if wall.axis == "h" else (1.0, 0.0, 0.0)
+    # the pleat line: alternately at the front of the curtain and set back
+    pts = []
+    for i in range(folds + 1):
+        u = a + i * step
+        pts.append((u, front - normal * (zag if i % 2 else 0.0)))
+
+    for (ua, ca), (ub, cb) in zip(pts, pts[1:]):
+        # the face of the fold, both ways round so it is solid from inside too
+        for flip in (1.0, -1.0):
+            n = tuple(v * flip * (1.0 if normal > 0 else -1.0) for v in across)
+            quad = (p(ua, z0, ca), p(ub, z0, cb), p(ub, z1, cb), p(ua, z1, ca))
+            mesh_quad = quad if flip > 0 else quad[::-1]
+            m.add_quad(*_m(mesh_quad), n)
+    # a rail across the head, so the curtain hangs from something
+    _box_across(m, wall, a, b, z1 - 0.12, z1,
+                front + normal * 0.02, front - normal * (zag + 0.06))
+
+
+def _m(points):
+    """Feet to metres, in the model's (x, height, z) order."""
+    return [(x * FT_TO_M, y * FT_TO_M, z * FT_TO_M) for x, y, z in points]
 
 
 def _frame(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float,
@@ -603,6 +666,9 @@ def build(
             roof_top + (params.parapet_ft if params.roof == "flat_parapet" else 0.0), 2
         ),
         "north_deg": north,
+        # the viewer lights itself from this, so the browser and the Blender
+        # scene are showing the model in the same light
+        "sky": sky_mod.get(params.sky).as_dict(),
         "facade": facade_summary,
         "rotation_applied_deg": round(rotation, 2),
         "triangles": scene.triangle_count,

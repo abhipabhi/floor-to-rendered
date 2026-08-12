@@ -14,6 +14,8 @@ lighting a black screen.
 
 from __future__ import annotations
 
+from . import sky as sky_mod
+
 TEMPLATE = '''"""Scene set-up for the model exported by floor-to-rendered.
 
     blender --python blender_import.py
@@ -41,6 +43,10 @@ NORTH_ALIGNED = {north_aligned}
 # clockwise from north, so it lands correctly against the compass on the sheet.
 SUN_ELEVATION_DEG = {sun_elevation}
 SUN_BEARING_DEG = {sun_bearing}
+#: the whole time-of-day preset, from app/sky.py, so the Blender scene and the
+#: browser viewer are lit by the same decision rather than by two sets of
+#: numbers that drift apart
+SKY = {sky}
 STOREYS = {storeys}
 #: which way the front of the house looks, in Blender's axes. The street side
 #: comes from the plan's own ROAD label, and the model may then be turned to put
@@ -94,6 +100,16 @@ def _set_soft(node, attr, value):
         pass
 
 
+def _rgb(hex_colour):
+    """`#rrggbb` to linear RGBA, which is what Blender's colour sockets want."""
+    h = hex_colour.lstrip("#")
+    out = []
+    for i in (0, 2, 4):
+        c = int(h[i:i + 2], 16) / 255.0
+        out.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+    return (out[0], out[1], out[2], 1.0)
+
+
 def build_sky(scene):
     """A physical sky, used for both the background and the bounce light.
 
@@ -117,22 +133,44 @@ def build_sky(scene):
     for node in list(tree.nodes):
         tree.nodes.remove(node)
     out = tree.nodes.new("ShaderNodeOutputWorld")
-    bg = tree.nodes.new("ShaderNodeBackground")
-    # Deliberately low. The sky is doing ambient fill only; the Sun lamp is the
-    # key light. Turn this up and the fill drowns the sun — at 0.9 the model
-    # renders with no cast shadows at all, which reads as a bug but is just the
-    # two light sources fighting. Raise it for an overcast look, and expect the
-    # shadows to go with it.
-    bg.inputs["Strength"].default_value = 0.22
-    out.location, bg.location = (300, 0), (100, 0)
-    tree.links.new(bg.outputs[0], out.inputs["Surface"])
+    out.location = (480, 0)
+
+    # Two backgrounds, not one, because the sky has two jobs and they want
+    # different strengths. As the *light* it has to stay low: the Sun lamp is
+    # the key, and turning the fill up drowns it — at 0.9 the model renders with
+    # no cast shadows at all, which reads as a bug but is just two light sources
+    # fighting. As the *backdrop* that same low strength is a washed-out pale
+    # grey, which is what made every render look overcast.
+    #
+    # A Light Path node separates them: camera rays see the bright one, every
+    # bounce sees the dim one. So the sky is a real blue and the shadows stay.
+    bg = tree.nodes.new("ShaderNodeBackground")          # lighting
+    bg.inputs["Strength"].default_value = SKY["sky_strength"]
+    bg.location = (140, -140)
+    seen = tree.nodes.new("ShaderNodeBackground")        # what the camera sees
+    seen.inputs["Strength"].default_value = SKY["backdrop_strength"]
+    seen.location = (140, 60)
 
     try:
         sky = tree.nodes.new("ShaderNodeTexSky")
     except Exception:
         sky = None
     if sky is None:
-        bg.inputs["Color"].default_value = (0.42, 0.58, 0.82, 1.0)
+        for node in (bg, seen):
+            node.inputs["Color"].default_value = (0.42, 0.58, 0.82, 1.0)
+
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.location = (320, 0)
+    path = tree.nodes.new("ShaderNodeLightPath")
+    path.location = (140, 260)
+    tree.links.new(bg.outputs[0], mix.inputs[1])
+    tree.links.new(seen.outputs[0], mix.inputs[2])
+    if "Is Camera Ray" in path.outputs:
+        tree.links.new(path.outputs["Is Camera Ray"], mix.inputs[0])
+    else:  # no light path on this build: show the lit version and move on
+        mix.inputs[0].default_value = 0.0
+    tree.links.new(mix.outputs[0], out.inputs["Surface"])
+    if sky is None:
         return
 
     sky.location = (-120, 0)
@@ -144,7 +182,30 @@ def build_sky(scene):
     # both double-counts the key light and washes the shadows out
     _set_soft(sky, "sun_intensity", 0.0)
     _set_soft(sky, "altitude", 20.0)
+    # The densities are what make one time of day look different from another:
+    # dust is what reddens a low sun, and without it dawn is just a dim noon.
+    _set_soft(sky, "air_density", SKY["air_density"])
+    _set_soft(sky, "dust_density", SKY["dust_density"])
+    _set_soft(sky, "ozone_density", SKY["ozone_density"])
     tree.links.new(sky.outputs[0], bg.inputs["Color"])
+
+    # Saturation, on the camera path only. The render goes through AgX, which
+    # is filmic and desaturates bright colours by design — lovely on the
+    # building, and it takes the sky to white. Pushing saturation here gives a
+    # blue sky and leaves every bounce of the lighting exactly as it was.
+    sat = tree.nodes.new("ShaderNodeHueSaturation")
+    sat.location = (-20, 120)
+    ok = False
+    for key in ("Saturation", "Sat"):
+        if key in sat.inputs:
+            sat.inputs[key].default_value = SKY["backdrop_saturation"]
+            ok = True
+    if ok and "Color" in sat.inputs:
+        tree.links.new(sky.outputs[0], sat.inputs["Color"])
+        tree.links.new(sat.outputs[0], seen.inputs["Color"])
+    else:  # not this Blender: an unsaturated sky beats an unlinked one
+        tree.nodes.remove(sat)
+        tree.links.new(sky.outputs[0], seen.inputs["Color"])
 
 
 def add_backdrop(size, ground_z):
@@ -154,17 +215,166 @@ def add_backdrop(size, ground_z):
     looks past it straight into the sky's below-horizon region, which every
     physical sky model renders near-black. The building ends up floating at
     dusk. This is scene dressing, not part of the model — delete it freely.
+
+    It has to reach the *horizon*. At 400 m its edge lands a little below the
+    horizon from a camera at eye level, and the strip of below-horizon sky
+    between the two reads as a hard grey-green band across the render — which
+    looked like a bug in the sky and was really the ground stopping too soon.
     """
-    bpy.ops.mesh.primitive_plane_add(size=max(400.0, size * 30), location=(0, 0, ground_z))
+    bpy.ops.mesh.primitive_plane_add(size=max(9000.0, size * 60), location=(0, 0, ground_z))
     plane = bpy.context.object
     plane.name = "Backdrop ground"
     mat = bpy.data.materials.new("Backdrop")
     if getattr(mat, "node_tree", None) is None:
         _set_soft(mat, "use_nodes", True)
-    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    tree = mat.node_tree
+    bsdf = tree.nodes.get("Principled BSDF")
     if bsdf:
-        bsdf.inputs["Base Color"].default_value = (0.26, 0.29, 0.22, 1.0)
+        # Two greens mixed by noise at two scales, not one flat colour. A single
+        # colour over nine kilometres is a sheet of card, and it reads as one
+        # however good the sky above it is.
+        base = _rgb(SKY["ground_hex"])
+        dark = tuple(c * 0.62 for c in base[:3]) + (1.0,)
+        # Scale is in *generated* coordinates, which run 0..1 across the whole
+        # nine-kilometre plane: at 1.6 the variation is kilometres wide and the
+        # ground still reads as one flat colour. This gives patches ~30 m across.
+        mixed = _noise_mix(tree, dark, base, scale=300.0, detail=8.0, at=(-420, -60))
+        if mixed is not None:
+            tree.links.new(mixed, bsdf.inputs["Base Color"])
+        else:
+            bsdf.inputs["Base Color"].default_value = base
         _set_soft(bsdf.inputs["Roughness"], "default_value", 1.0)
+    plane.data.materials.append(mat)
+    return plane
+
+
+def _noise_mix(tree, colour_a, colour_b, scale, detail, at=(0, 0)):
+    """A noise-driven mix of two colours. Returns the output socket, or None.
+
+    Kept defensive like everything else that touches shader nodes: the mix node
+    was renamed between Blender versions and its sockets are addressed by index
+    in one generation and by name in another.
+    """
+    try:
+        noise = tree.nodes.new("ShaderNodeTexNoise")
+        mix = tree.nodes.new("ShaderNodeMixRGB")
+    except Exception:
+        try:
+            mix = tree.nodes.new("ShaderNodeMix")
+            _set_soft(mix, "data_type", "RGBA")
+        except Exception:
+            return None
+    noise.location = (at[0], at[1])
+    mix.location = (at[0] + 200, at[1])
+    _set_soft(noise.inputs["Scale"], "default_value", scale)
+    _set_soft(noise.inputs["Detail"], "default_value", detail)
+    _set_soft(noise.inputs["Roughness"], "default_value", 0.62)
+
+    fac = mix.inputs[0]
+    a = b = None
+    for name in ("Color1", "A"):
+        if name in mix.inputs:
+            a = mix.inputs[name]
+    for name in ("Color2", "B"):
+        if name in mix.inputs:
+            b = mix.inputs[name]
+    if a is None or b is None:
+        return None
+    a.default_value = colour_a
+    b.default_value = colour_b
+    tree.links.new(noise.outputs["Fac"], fac)
+    out = mix.outputs.get("Color") or mix.outputs.get("Result") or mix.outputs[0]
+    return out
+
+
+#: how high the cloud layer sits, in metres, and how big the sheet is
+CLOUD_HEIGHT_M = 900.0
+
+
+def add_clouds(size, ground_z):
+    """A cloud layer overhead.
+
+    A physical sky model gives a gradient and nothing else, and a gradient is
+    what makes a render look like a render. Clouds are a plane a long way up
+    with a noise-driven alpha — cheap, and they read from every camera in the
+    scene. It casts no shadow: the point is the sky, not a dappled building.
+    """
+    # A dome, not a plane. A cloud layer overhead is seen edge-on by a camera
+    # at eye level, so a plane foreshortens into horizontal streaks however
+    # good the noise is. On a dome every part of the sky is the same distance
+    # away and the clouds keep their shape wherever the camera looks.
+    extent = max(9000.0, size * 60)
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        radius=extent, segments=64, ring_count=32,
+        location=(0, 0, ground_z - extent * 0.55),
+    )
+    plane = bpy.context.object
+    plane.name = "Sky clouds"
+    for attr in ("visible_shadow", "visible_diffuse", "visible_glossy"):
+        _set_soft(plane, attr, False)
+    _set_soft(plane, "is_shadow_catcher", False)
+
+    mat = bpy.data.materials.new("Clouds")
+    if getattr(mat, "node_tree", None) is None:
+        _set_soft(mat, "use_nodes", True)
+    # alpha-blended, and never a shadow caster — in EEVEE both are material flags
+    _set_soft(mat, "blend_method", "BLEND")
+    _set_soft(mat, "shadow_method", "NONE")
+    _set_soft(mat, "surface_render_method", "BLENDED")
+    # we are inside the dome; without this its far wall is drawn through the
+    # near one and every cloud gets a grey twin behind it
+    _set_soft(mat, "use_backface_culling", False)
+    _set_soft(mat, "show_transparent_back", False)
+    tree = mat.node_tree
+    bsdf = tree.nodes.get("Principled BSDF")
+    if bsdf is None:
+        plane.data.materials.append(mat)
+        return plane
+
+    lit = _rgb(SKY["cloud_hex"])
+    bsdf.inputs["Base Color"].default_value = lit
+    _set_soft(bsdf.inputs["Roughness"], "default_value", 1.0)
+    for key in ("Specular IOR Level", "Specular"):
+        if key in bsdf.inputs:
+            bsdf.inputs[key].default_value = 0.0
+    # a little emission so the undersides do not go to soot at a low sun
+    for key in ("Emission Color", "Emission"):
+        if key in bsdf.inputs and hasattr(bsdf.inputs[key], "default_value"):
+            try:
+                bsdf.inputs[key].default_value = lit
+            except (TypeError, ValueError):
+                pass
+    _set_soft(bsdf.inputs.get("Emission Strength"), "default_value",
+              SKY["cloud_glow"])
+
+    # noise → a tight ramp. The ramp is what turns a smooth fog into shapes with
+    # edges; without it the layer is a haze and reads as a dirty lens.
+    try:
+        noise = tree.nodes.new("ShaderNodeTexNoise")
+        ramp = tree.nodes.new("ShaderNodeValToRGB")
+        mapping = tree.nodes.new("ShaderNodeMapping")
+        coord = tree.nodes.new("ShaderNodeTexCoord")
+    except Exception:
+        plane.data.materials.append(mat)
+        return plane
+    coord.location, mapping.location = (-820, 0), (-620, 0)
+    noise.location, ramp.location = (-420, 0), (-220, 0)
+    # Object coordinates on this plane run to ±12 km. Noise at a scale of one
+    # over that is white noise sampled far too finely: it averages to a flat
+    # grey and the ramp then turns the whole sky on or off. Normalise the
+    # coordinates first, so `cloud_scale` means "cloud masses across the sky".
+    k = SKY["cloud_scale"] / extent
+    _set_soft(mapping.inputs["Scale"], "default_value", (k, k, k))
+    _set_soft(noise.inputs["Scale"], "default_value", 1.0)
+    _set_soft(noise.inputs["Detail"], "default_value", 9.0)
+    _set_soft(noise.inputs["Roughness"], "default_value", 0.58)
+    ramp.color_ramp.elements[0].position = SKY["cloud_cover"]
+    ramp.color_ramp.elements[1].position = min(
+        0.99, SKY["cloud_cover"] + SKY["cloud_softness"])
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
+    tree.links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
+    tree.links.new(ramp.outputs["Color"], bsdf.inputs["Alpha"])
     plane.data.materials.append(mat)
     return plane
 
@@ -183,7 +393,7 @@ def collect(objects):
 
     for obj in objects:
         target = "Shell"
-        if obj.name.startswith("Backdrop"):
+        if obj.name.startswith(("Backdrop", "Sky clouds")):
             target = "Site"
         elif obj.name.startswith("Site"):
             target = "Site"
@@ -242,7 +452,7 @@ def add_cameras(size, zmax, centre):
         cam = bpy.context.object
         cam.name = name
         cam.data.lens = lens
-        cam.data.clip_end = max(1000.0, size * 40)
+        cam.data.clip_end = max(20000.0, size * 90)
         aim(cam, centre - (centre + offset))
         if first is None:
             first = cam
@@ -279,14 +489,18 @@ def main():
     bpy.ops.object.light_add(type="SUN", location=centre + towards_sun * size * 2.2)
     sun = bpy.context.object
     sun.name = "Sun"
-    sun.data.energy = 5.0
-    sun.data.angle = math.radians(0.9)   # a crisp but not razor-edged shadow
+    sun.data.energy = SKY["sun_energy"]
+    sun.data.color = _rgb(SKY["sun_hex"])[:3]
+    # how wide the sun disc is, which is what softens the shadow edge: a low sun
+    # through more atmosphere has a softer edge than one overhead
+    sun.data.angle = math.radians(SKY["sun_angle_deg"])
     aim(sun, -towards_sun)
 
     build_sky(scene)
     backdrop = add_backdrop(size, min(zs))
+    clouds = add_clouds(size, min(zs))
     scene.camera = add_cameras(size, zmax, centre)
-    collect(imported + [backdrop])
+    collect(imported + [backdrop, clouds])
 
     # Render settings worth having set before the first F12
     scene.render.resolution_x = 1920
@@ -294,6 +508,7 @@ def main():
     scene.render.film_transparent = False
     _set_any(scene.render, "engine", ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"))
     _set_any(scene.view_settings, "view_transform", ("AgX", "Filmic"))
+    _set_soft(scene.view_settings, "exposure", SKY["exposure_ev"])
     if getattr(scene, "eevee", None) is not None:
         _set_soft(scene.eevee, "use_shadows", True)
         _set_soft(scene.eevee, "use_raytracing", True)
@@ -323,9 +538,10 @@ def blender_script(
     glb_name: str = "model.glb",
     north_aligned: bool = True,
     storeys: list[str] | None = None,
-    sun_elevation: float = 34.0,
-    sun_bearing: float = 138.0,
+    sun_elevation: float | None = None,
+    sun_bearing: float | None = None,
     facade_normal_xz: tuple[float, float] | None = None,
+    sky: str = sky_mod.DEFAULT,
 ) -> str:
     """The import script, told what the model it sits next to contains.
 
@@ -337,11 +553,14 @@ def blender_script(
     # (x, y, z) to (x, -z, y) — so a facade normal of (nx, nz) points along
     # (nx, -nz) once it is in the scene.
     nx, nz = facade_normal_xz or (0.0, -1.0)
+    s = sky_mod.get(sky)
     return TEMPLATE.format(
         glb_name=glb_name,
         north_aligned=bool(north_aligned),
         storeys=repr(list(storeys or [])),
-        sun_elevation=float(sun_elevation),
-        sun_bearing=float(sun_bearing),
+        sky=repr(s.as_dict()),
+        sun_elevation=float(
+            s.elevation_deg if sun_elevation is None else sun_elevation),
+        sun_bearing=float(s.bearing_deg if sun_bearing is None else sun_bearing),
         facade_dir=repr((round(float(nx), 4), round(-float(nz), 4))),
     )

@@ -238,6 +238,11 @@ class DetailParams(BaseModel):
     sill_projection_ft: float = 0.25
     chajjas: bool = True  # the sunshade over a window or door
     chajja_ft: float | None = None  # None → the projection measured off the set
+    #: Curtains behind the glass, drawn across the opening. A window with
+    #: nothing behind it is a hole into an unmodelled interior and the eye goes
+    #: straight to it; closing it is the point, so they are drawn rather than
+    #: tied back at the sides.
+    curtains: bool = True
     floor_bands: bool = True
     band_projection_ft: float = 0.17
     coping: bool = True  # the cap course on top of the parapet
@@ -256,6 +261,7 @@ PanelKind = Literal[
     "frame",    # a surround standing proud of an opening
     "canopy",   # the deep plane across the top
     "pier",
+    "lamp",     # a wall light, emissive so it reads as a fitting
 ]
 
 
@@ -327,6 +333,13 @@ class FacadeParams(BaseModel):
     fin_pitch_ft: float = 0.72
     fin_projection_ft: float = 2.0
     screen_width_ft: float = 4.0
+    #: wall lights: either side of the way in, in the porch, and on the upper
+    #: wall. Emissive, so they read as fittings by day and as the only warm
+    #: thing in the picture at dusk.
+    lamps: bool = True
+    lamp_width_ft: float = 0.42
+    lamp_height_ft: float = 1.15
+    lamp_height_above_floor_ft: float = 6.6
     canopy: bool = True
     canopy_projection_ft: float = 3.15  # the document's own lvl +3'2"
     canopy_thickness_ft: float = 0.9
@@ -406,6 +419,8 @@ class BuildParams(BaseModel):
     ground_margin_ft: float = 12.0
     align_north: bool = True
     units: Literal["m", "ft"] = "m"
+    #: the light the model is shown in; see app.sky.SKIES
+    sky: Literal["dawn", "morning", "noon"] = "morning"
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
     detail: DetailParams = Field(default_factory=DetailParams)

@@ -10,9 +10,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import datum
+from . import elevdoc
+from . import facade as facade_mod
 from . import storage
 from .blender import blender_script
-from .build3d import build
+from .build3d import build, level_elevations
 from . import site as site_mod
 from . import textures as tex
 from .classify import FLOOR_PLAN, KIND_LABELS, level_name
@@ -20,10 +22,17 @@ from .finish import PRESETS, SLOTS
 from .errors import AppError, handle, not_found
 from .extract import extract_plan
 from .glb import write_glb
-from .models import BuildParams, JobState, Opening, PlanExtract, SheetInfo
+from .models import (
+    BuildParams,
+    FacadeParams,
+    JobState,
+    Opening,
+    PlanExtract,
+    SheetInfo,
+)
 from .obj import texture_files, write_mtl, write_obj
 from .pdfvec import render_page_png
-from .pipeline import default_params, extract_included, sheet_readings
+from .pipeline import default_params, extract_included, road_xy_for, sheet_readings
 from .units import fmt_ft
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -471,6 +480,13 @@ def build_model(job_id: str) -> dict:
             indent=2,
         ),
     }
+    frame, panels = _facade_for(state)
+    if frame is not None:
+        files["elevation.pdf"] = elevdoc.to_pdf([
+            elevdoc.elevation(panels, frame, state.params,
+                              subtitle=state.title or "Front elevation"),
+            elevdoc.palette(state.params),
+        ])
     files.update(texture_files(result.scene))
     storage.write_bundle(job_id, files, _readme(state, result.summary))
     state.build = result.summary
@@ -478,8 +494,79 @@ def build_model(job_id: str) -> dict:
     return {"summary": result.summary}
 
 
+# --------------------------------------------------------------------------- #
+# façade
+# --------------------------------------------------------------------------- #
+def _facade_for(state: JobState):
+    """Compose (or recall) the façade for a job. ``(frame, panels)``."""
+    extracts = [
+        e for e in state.extracts.values()
+        if (state.params.level(e.level) is None or state.params.level(e.level).include)
+    ]
+    if not extracts:
+        return None, []
+    extracts.sort(key=lambda e: e.level)
+    elevations = level_elevations(extracts, state.params)
+    ing = _Ing(state.id, state.sheets)
+    road = road_xy_for(ing, {e.sheet_id: e for e in extracts})  # type: ignore[arg-type]
+    side = site_mod.road_side(extracts[0], road)
+    frame = facade_mod.front_frame(extracts, elevations, side, state.params.plinth_ft)
+    if frame is None:
+        return None, []
+    panels = state.params.facade.panels or facade_mod.compose(
+        extracts, elevations, frame, state.params
+    )
+    return frame, panels
+
+
+@app.get("/api/jobs/{job_id}/facade")
+def get_facade(job_id: str) -> dict:
+    """The façade as panels, plus the elevation drawn from them."""
+    state = _get(job_id)
+    frame, panels = _facade_for(state)
+    if frame is None:
+        raise AppError("no_facade", "Extract a floor plan first", 409)
+    drawing = elevdoc.elevation(
+        panels, frame, state.params,
+        subtitle="Composed from the plans · lvl is projection from the wall face",
+    )
+    return {
+        "frame": {
+            "side": frame.side, "width_ft": round(frame.width, 3),
+            "height_ft": round(frame.height, 3),
+            "u0": frame.u0, "u1": frame.u1,
+            "z_ground": frame.z_ground, "z_top": frame.z_top,
+        },
+        "panels": [p.model_dump() for p in panels],
+        "params": state.params.facade.model_dump(),
+        "svg": elevdoc.to_svg(drawing),
+        "kinds": facade_mod.KIND_ORDER,
+    }
+
+
+@app.put("/api/jobs/{job_id}/facade")
+def set_facade(job_id: str, params: FacadeParams) -> dict:
+    """Change how the façade is composed, or hand back edited panels."""
+    state = _get(job_id)
+    state.params.facade = params
+    state.build = None
+    storage.save_state(state)
+    return get_facade(job_id)
+
+
+@app.post("/api/jobs/{job_id}/facade/recompose")
+def recompose_facade(job_id: str) -> dict:
+    """Throw away hand edits and lay the façade out from the model again."""
+    state = _get(job_id)
+    state.params.facade.panels = []
+    state.build = None
+    storage.save_state(state)
+    return get_facade(job_id)
+
+
 DOWNLOADS = {
     "model.glb": "model/gltf-binary",
+    "elevation.pdf": "application/pdf",
     "model.obj": "text/plain",
     "model.mtl": "text/plain",
     "model.json": "application/json",

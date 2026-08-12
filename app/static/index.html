@@ -27,7 +27,8 @@
   <button data-step="check" disabled>3 · Check the read</button>
   <button data-step="heights" disabled>4 · Heights</button>
   <button data-step="finish" disabled>5 · Materials &amp; site</button>
-  <button data-step="model" disabled>6 · 3D model</button>
+  <button data-step="facade" disabled>6 · Fasād</button>
+  <button data-step="model" disabled>7 · 3D model</button>
 </nav>
 
 <main>
@@ -140,11 +141,45 @@
   </div>
 
   <div class="actions">
-    <button class="btn" id="tobuild">Build the 3D model →</button>
+    <button class="btn" id="tofacade">Design the fasād →</button>
   </div>
 </section>
 
-<!-- 5 ─────────────────────────────────────────────── model -->
+
+<!-- 6 ─────────────────────────────────────────────── fasad -->
+<section id="step-facade" class="step">
+  <h2>Fasād</h2>
+  <p class="note-strong">The front, composed as panels. Each one is a rectangle,
+    a material and a <em>lvl</em> — how far it stands proud of the wall behind.
+    It is laid out from your building's own width, storey heights and window
+    positions, so every dimension below is real. Change anything; the elevation
+    and the model follow.</p>
+
+  <div class="facade-body">
+    <div class="elev-wrap">
+      <div id="facadeworking" class="working" hidden><span class="spinner"></span> Composing…</div>
+      <div id="elevation"></div>
+    </div>
+    <div class="facade-side">
+      <div class="lvl-card">
+        <h3>Elements</h3>
+        <div id="facadeform"></div>
+      </div>
+      <div class="lvl-card">
+        <h3>Panels</h3>
+        <table class="slots" id="paneltable"></table>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="tobuild">Build the 3D model →</button>
+    <button class="btn ghost" id="recompose">Recompose from the model</button>
+    <span class="muted small" id="facadecount"></span>
+  </div>
+</section>
+
+<!-- 7 ─────────────────────────────────────────────── model -->
 <section id="step-model" class="step">
   <h2>3D model</h2>
   <div id="building" class="working" hidden><span class="spinner"></span> Building…</div>

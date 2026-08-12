@@ -244,7 +244,19 @@ class DetailParams(BaseModel):
     balustrades: bool = True  # railings as glass and rail, not a solid slab
 
 
-PanelKind = Literal["field", "recess", "clad", "band", "fin", "frame", "canopy", "pier"]
+PanelKind = Literal[
+    "field",    # the wall itself, at lvl 0
+    "recess",   # set back — a balcony void, an entry, a shadow joint
+    "clad",     # timber facing, flat against whatever it is on
+    "band",     # a horizontal band at a floor line
+    "slab",     # a balcony's own soffit and top edge, projecting
+    "mass",     # a whole bay pushed forward — the biggest move on the facade
+    "fin",      # one blade of a vertical screen
+    "post",     # a slim column holding the canopy off the wall
+    "frame",    # a surround standing proud of an opening
+    "canopy",   # the deep plane across the top
+    "pier",
+]
 
 
 class Panel(BaseModel):
@@ -292,23 +304,31 @@ class FacadeParams(BaseModel):
     """
 
     enabled: bool = True
-    preset: str = "fins_and_frames"
+    #: which arrangement to lay out; see app.facade.ARRANGEMENTS
+    arrangement: str = "layered"
+    #: which end the tall fin screen stands at, looking from the street
+    screen_side: Literal["left", "right", "auto"] = "auto"
     #: composed once and then editable; empty means compose from the model
     panels: list[Panel] = Field(default_factory=list)
 
     bands: bool = True
-    band_height_ft: float = 1.1
+    band_height_ft: float = 1.0
     box_frames: bool = True
-    frame_margin_ft: float = 0.7
-    entrance_bay: bool = True
-    bay_width_ft: float = 7.0
+    frame_margin_ft: float = 0.6
+    #: the recessed balcony between the screen and the projecting mass
+    void: bool = True
+    void_depth_ft: float = 1.6
+    #: the clad bay pushed forward — the strongest element after the screen
+    mass: bool = True
+    mass_projection_ft: float = 1.3
+    #: the vertical screen: full height, standing clear of everything else
     fins: bool = True
-    fin_width_ft: float = 0.5
-    fin_pitch_ft: float = 1.1
-    clad_panel: bool = True
+    fin_width_ft: float = 0.42
+    fin_pitch_ft: float = 0.72
+    fin_projection_ft: float = 2.0
+    screen_width_ft: float = 4.0
     canopy: bool = True
     canopy_projection_ft: float = 3.15  # the document's own lvl +3'2"
-    canopy_depth_ft: float = 1.4
     canopy_thickness_ft: float = 0.9
     canopy_side_ft: float = 1.0
 

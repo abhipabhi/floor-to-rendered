@@ -641,6 +641,27 @@ function drawFacade() {
 
   const p = FACADE.params;
   const f = $('#facadeform'); f.textContent = '';
+
+  // the arrangement comes first: it decides what the rest of the controls are
+  // adjusting, and it is the quickest way to a different-looking house
+  const arr = el('div', { class: 'arrangements' });
+  for (const [key, note] of Object.entries(FACADE.arrangements || {})) {
+    const b = el('button', {
+      class: 'arr' + (p.arrangement === key ? ' on' : ''),
+      onclick: () => saveFacade({ arrangement: key }),
+    }, el('strong', {}, key), el('div', { class: 'ev' }, note));
+    arr.append(b);
+  }
+  f.append(arr);
+
+  const sideSel = el('select', {
+    onchange: e => saveFacade({ screen_side: e.target.value }),
+  }, ...[['auto', 'Wherever there is room'], ['left', 'Left'], ['right', 'Right']]
+      .map(([v, l]) => { const o = el('option', { value: v }, l);
+        if (p.screen_side === v) o.selected = true; return o; }));
+  f.append(el('div', { class: 'field' },
+    el('span', {}, 'Screen stands', el('div', { class: 'ev' }, 'which end the fins go')),
+    sideSel));
   const toggle = (key, label, hint) => {
     const i = el('input', { type: 'checkbox' });
     i.checked = !!p[key];
@@ -657,10 +678,13 @@ function drawFacade() {
   f.append(el('div', { class: 'grid2' },
     toggle('canopy', 'Roof canopy', 'the deep dark slab across the top'),
     num('canopy_projection_ft', 'Canopy lvl (ft)'),
-    toggle('fins', 'Vertical fins', 'timber, over the entrance bay'),
+    toggle('fins', 'Fin screen', 'full height, past the canopy'),
     num('fin_pitch_ft', 'Fin spacing (ft)'),
-    toggle('entrance_bay', 'Clad entrance bay'),
-    num('bay_width_ft', 'Bay width (ft)'),
+    num('screen_width_ft', 'Screen width (ft)'),
+    toggle('mass', 'Projecting clad bay'),
+    num('mass_projection_ft', 'Bay lvl (ft)'),
+    toggle('void', 'Recessed balcony'),
+    num('void_depth_ft', 'Recess depth (ft)'),
     toggle('box_frames', 'Box frames', 'a surround standing proud of each opening'),
     num('frame_margin_ft', 'Frame width (ft)'),
     toggle('bands', 'Floor bands'),

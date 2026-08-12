@@ -17,7 +17,12 @@ from conftest import needs_example
 
 
 def _frame(side="+y"):
-    return facade.Frame(side=side, face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=22.0)
+    # with one wall behind the whole thing: a frame that records no wall has
+    # nothing to fix a panel to, and correctly builds nothing
+    return facade.Frame(
+        side=side, face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=22.0,
+        faces=[facade.Wallface(0.0, 30.0, 0.0, 22.0, 40.0)],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -252,3 +257,32 @@ def test_turning_the_facade_off_leaves_the_building_alone(gf_extract, ff_extract
     result = build(extracts, base, road_xy=(15.0, 60.0))
     assert not any(m.name.startswith("Façade") for m in result.scene.meshes)
     assert result.summary["facade"] == {}
+
+
+def test_a_panel_with_no_wall_behind_it_is_not_built():
+    """Above a set-back storey there is nothing to fix a panel to. Building one
+    anyway leaves it hanging a foot off the building in mid-air, which is
+    exactly what a single front plane through the frontmost corner produced."""
+    scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
+    frame = facade.Frame(
+        side="+y", face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=22.0,
+        faces=[facade.Wallface(0.0, 10.0, 0.0, 22.0, 40.0)],  # wall on the left only
+    )
+    panels = [Panel(id="a", kind="band", u0=0, u1=30, z0=10, z1=11, depth_ft=0.4)]
+    assert facade.build(scene, panels, frame) == 1, "one piece, over the wall only"
+    mesh = next(m for m in scene.meshes if "band" in m.name)
+    b = mesh.bounds()
+    assert b[3] / 0.3048 <= 10.5, "nothing built out over the gap"
+
+
+def test_a_panel_steps_with_the_wall_behind_it():
+    """A band across a house whose upper storey comes forward has to step with
+    it; on one plane it stands off the lower wall at one end."""
+    scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
+    frame = facade.Frame(
+        side="+y", face=42.0, u0=0.0, u1=20.0, z_ground=0.0, z_top=22.0,
+        faces=[facade.Wallface(0.0, 10.0, 0.0, 22.0, 40.0),
+               facade.Wallface(10.0, 20.0, 0.0, 22.0, 42.0)],
+    )
+    panels = [Panel(id="a", kind="band", u0=0, u1=20, z0=10, z1=11, depth_ft=0.5)]
+    assert facade.build(scene, panels, frame) == 2, "one piece per wall plane"

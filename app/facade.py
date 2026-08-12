@@ -28,7 +28,7 @@ is why every panel carries its numbers and why they are shown on the elevation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .mesh import Scene
 from .models import FacadeParams, Panel, PlanExtract
@@ -41,6 +41,12 @@ KIND_ORDER = [
 ]
 
 #: which finish slot each kind wears, following the document's palette roles
+#: Kinds that are fixed to a wall, and only exist where there is one behind
+#: them. Everything else — the canopy, the screen and its posts — is a
+#: structure standing off the building, and spans whether there is wall behind
+#: it or not; that is what a canopy on posts is for.
+WALL_MOUNTED = {"recess", "clad", "band", "slab", "mass", "frame", "pier"}
+
 KIND_MATERIAL = {
     "field": "wall_ext",    # light grey — main wall finish
     "recess": "accent",     # dark grey — the shadow behind everything
@@ -88,6 +94,17 @@ ARRANGEMENTS = {
 # where the front is, and how to get onto it
 # --------------------------------------------------------------------------- #
 @dataclass
+class Wallface:
+    """One stretch of front wall: where it is along the face, and how far out."""
+
+    u0: float
+    u1: float
+    z0: float
+    z1: float
+    face: float
+
+
+@dataclass
 class Frame:
     """The plane the facade is composed on.
 
@@ -95,14 +112,40 @@ class Frame:
     ``z`` is height above ground, and ``depth`` is measured outwards. Keeping
     that mapping in one place is what lets the composition be written in plain
     left-to-right terms whichever side of the plan the road happens to be on.
+
+    A front is rarely one plane. On the example set the ground floor stands at
+    y=39.89 while the storey above it comes forward to y=41.12, and the left
+    half of that upper floor has no front wall at all. ``faces`` records where
+    each stretch of wall actually is, so a panel can be fixed to the wall behind
+    it rather than to a single plane drawn through the furthest-forward corner —
+    which is what left the façade hanging a foot off the building.
     """
 
     side: str          # "+y" | "-y" | "+x" | "-x"
-    face: float        # the coordinate of the outer face
+    face: float        # the outermost front wall, used when nothing is behind
     u0: float          # extent along the face
     u1: float
     z_ground: float
     z_top: float
+    faces: list[Wallface] = field(default_factory=list)
+
+    def face_at(self, u: float, z: float) -> float | None:
+        """Where the wall is behind a point on the elevation, or None.
+
+        None matters. Where the building has no front wall — above a set-back
+        storey, over a recessed entry — there is nothing for a panel to be
+        fixed to, and drawing one anyway leaves it hanging in the air. The
+        caller drops those pieces rather than guessing at a plane for them.
+        """
+        best = None
+        for w in self.faces:
+            if w.u0 - 0.05 <= u <= w.u1 + 0.05 and w.z0 - 0.6 <= z <= w.z1 + 0.6:
+                if best is None or self._further(w.face, best):
+                    best = w.face
+        return best
+
+    def _further(self, a: float, b: float) -> bool:
+        return a > b if self.side in ("+y", "+x") else a < b
 
     @property
     def width(self) -> float:
@@ -112,15 +155,20 @@ class Frame:
     def height(self) -> float:
         return self.z_top - self.z_ground
 
-    def box(self, u0: float, u1: float, z0: float, z1: float, depth: float):
-        """A panel's world-space box: ``(x0, y0, z0, x1, y1, z1)`` in feet."""
+    def box(self, u0: float, u1: float, z0: float, z1: float, depth: float,
+            face: float | None = None):
+        """A panel's world-space box: ``(x0, y0, z0, x1, y1, z1)`` in feet.
+
+        ``face`` is the wall it is fixed to. Left out it falls back to the
+        frontmost wall on the building, which is only right where that is in
+        fact the wall behind the panel.
+        """
         out = 1.0 if self.side in ("+y", "+x") else -1.0
-        near, far = self.face, self.face + out * depth
+        base = self.face if face is None else face
+        near, far = base, base + out * depth
         c0, c1 = min(near, far), max(near, far)
         if depth < 0:  # a recess cuts back into the wall instead
-            c0, c1 = min(self.face + out * depth, self.face), max(
-                self.face + out * depth, self.face
-            )
+            c0, c1 = min(base + out * depth, base), max(base + out * depth, base)
         if self.side in ("+y", "-y"):
             return (u0, c0, z0, u1, c1, z1)
         return (c0, u0, z0, c1, u1, z1)
@@ -136,14 +184,19 @@ def front_frame(
     want = "hi" if side in ("+y", "+x") else "lo"
 
     faces: list[float] = []
+    stretches: list[Wallface] = []
     for ex in extracts:
+        base, f2f, _wh = elevations[ex.level]
         for w in ex.walls:
             if w.is_railing or not w.exterior or w.axis != axis:
                 continue
             if w.outside not in (want, "both"):
                 continue
-            faces.append(w.y1 if side == "+y" else w.y0 if side == "-y"
-                         else w.x1 if side == "+x" else w.x0)
+            at = (w.y1 if side == "+y" else w.y0 if side == "-y"
+                  else w.x1 if side == "+x" else w.x0)
+            faces.append(at)
+            a, b = w.u_range()
+            stretches.append(Wallface(min(a, b), max(a, b), base, base + f2f, at))
     if not faces:
         return None
     face = max(faces) if side in ("+y", "+x") else min(faces)
@@ -155,7 +208,7 @@ def front_frame(
         hi.append(x1 if axis == "h" else y1)
 
     top = max(base + f2f for base, f2f, _wh in elevations.values())
-    return Frame(side, face, min(lo), max(hi), 0.0, top)
+    return Frame(side, face, min(lo), max(hi), 0.0, top, faces=stretches)
 
 
 def front_openings(
@@ -401,14 +454,41 @@ def build(scene: Scene, panels: list[Panel], frame: Frame, group: str = "Façade
         if abs(panel.depth_ft) < 0.01:
             continue
         mesh = scene.mesh(f"{group} — {panel.kind}", panel.material)
+        mounted = panel.kind in WALL_MOUNTED
         for u0, u1, z0, z1 in _pieces(panel):
-            x0, y0, zz0, x1, y1, zz1 = frame.box(u0, u1, z0, z1, panel.depth_ft)
-            mesh.add_box(
-                x0 * FT_TO_M, zz0 * FT_TO_M, y0 * FT_TO_M,
-                x1 * FT_TO_M, zz1 * FT_TO_M, y1 * FT_TO_M,
-            )
-            made += 1
+            spans = (_by_wall(frame, u0, u1, (z0 + z1) / 2) if mounted
+                     else [(u0, u1, frame.face)])
+            for a, b, at in spans:
+                x0, y0, zz0, x1, y1, zz1 = frame.box(a, b, z0, z1, panel.depth_ft, at)
+                mesh.add_box(
+                    x0 * FT_TO_M, zz0 * FT_TO_M, y0 * FT_TO_M,
+                    x1 * FT_TO_M, zz1 * FT_TO_M, y1 * FT_TO_M,
+                )
+                made += 1
     return made
+
+
+def _by_wall(frame: Frame, u0: float, u1: float, z: float, step: float = 0.5):
+    """Split a panel where the wall behind it steps, so each piece sits on it.
+
+    A band running the width of a house whose upper storey comes forward has to
+    step with it; built on one plane it stands a foot off the lower wall at one
+    end and buries itself at the other.
+    """
+    out: list[tuple[float, float, float | None]] = []
+    u, start, at = u0, u0, frame.face_at(u0, z)
+    while u < u1:
+        u = min(u + step, u1)
+        here = frame.face_at(u, z)
+        same = (here is None and at is None) or (
+            here is not None and at is not None and abs(here - at) <= 0.02
+        )
+        if not same:
+            out.append((start, u - step, at))
+            start, at = u - step, here
+    out.append((start, u1, at))
+    # a stretch with no wall behind it gets nothing built on it
+    return [(a, b, f) for a, b, f in out if f is not None and b - a > 0.02]
 
 
 def _pieces(panel: Panel):

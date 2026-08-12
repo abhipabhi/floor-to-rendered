@@ -228,13 +228,13 @@ def test_site_is_built_into_its_own_groups():
         align_north=False,
         # switched on explicitly: the defaults no longer include them, because
         # a compound wall and a row of trees stand in front of the elevation
-        site=SiteParams(trees=3, cars=1, boundary_wall=True),
+        site=SiteParams(trees=3, cars=1, boundary_wall=True, lawn=True, driveway=True),
     )
     result = build([ex], params, road_xy=(15.0, 50.0))
     names = {m.name for m in result.scene.meshes}
     for expect in (
-        "Site — ground",
-        "Site — driveway",
+        "Site — lawn",
+        "Site — forecourt",
         "Site — boundary wall",
         "Site — gate",
         "Site — cars",
@@ -258,8 +258,10 @@ def test_the_default_site_is_a_street_not_a_compound():
     names = {m.name for m in build([ex], params, road_xy=(15.0, 50.0)).scene.meshes}
     for gone in ("Site — boundary wall", "Site — gate", "Site — trees", "Site — cars"):
         assert gone not in names, gone
-    for present in ("Site — footpath", "Site — kerb", "Site — road"):
+    for present in ("Site — footpath", "Site — kerb", "Site — road", "Site — forecourt"):
         assert present in names, present
+    # no lawn and no path across it: paving runs from the house to the kerb
+    assert "Site — lawn" not in names
 
 
 def test_the_site_can_be_turned_off_entirely():

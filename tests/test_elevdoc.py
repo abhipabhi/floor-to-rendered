@@ -13,7 +13,10 @@ from conftest import needs_example
 
 
 def _frame():
-    return facade.Frame(side="+y", face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=22.0)
+    return facade.Frame(
+        side="+y", face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=22.0,
+        faces=[facade.Wallface(0.0, 30.0, 0.0, 22.0, 40.0)],
+    )
 
 
 def _panels():

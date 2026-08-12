@@ -69,6 +69,72 @@ def test_the_front_is_found_on_the_side_the_plan_calls_road(gf_extract, ff_extra
 
 
 # --------------------------------------------------------------------------- #
+# zones: the massing the composition is laid out on
+# --------------------------------------------------------------------------- #
+def test_a_nine_inch_step_is_a_construction_joint_not_a_change_of_massing():
+    frame = facade.Frame(
+        side="+y", face=40.75, u0=0.0, u1=30.0, z_ground=0.0, z_top=20.0,
+        faces=[facade.Wallface(0.0, 15.0, 0.0, 20.0, 40.0),
+               facade.Wallface(15.0, 15.75, 0.0, 20.0, 40.75),  # a pier
+               facade.Wallface(15.75, 30.0, 0.0, 20.0, 40.0)],
+    )
+    zs = facade.zones(frame)
+    assert len(zs) == 2, "a 9 inch pier is not a zone of its own"
+    assert all(z.front == 40.0 for z in zs), (
+        "and it must not drag a zone's plane forward with it"
+    )
+
+
+def test_a_stub_of_wall_does_not_make_an_overhung_storey_walled():
+    """A zone counts a wall that covers most of it. Without that rule the last
+    9 inches of ground floor poking under a 12 ft overhang would say the
+    ground storey is walled, and the porch would never be found."""
+    frame = facade.Frame(
+        side="+y", face=41.0, u0=0.0, u1=24.0, z_ground=0.0, z_top=20.0,
+        faces=[facade.Wallface(0.0, 13.0, 0.0, 10.0, 40.0),    # ground floor
+               facade.Wallface(11.0, 24.0, 10.0, 20.0, 41.0)],  # first, overhanging
+    )
+    open_below = [z for z in facade.zones(frame) if z.walls and not z.walled(0, 10)]
+    assert open_below, "the overhung ground storey is open"
+    assert open_below[0].u1 == 24.0, "and it runs to the end of the overhang"
+
+
+def test_the_plinth_follows_the_wall_directly_above_it():
+    """Below the lowest wall there is nothing to read. Taking the frontmost
+    wall in the column instead of the nearest stood the plinth a foot proud
+    of the storey it carries."""
+    frame = facade.Frame(
+        side="+y", face=42.0, u0=0.0, u1=10.0, z_ground=0.0, z_top=22.0,
+        faces=[facade.Wallface(0.0, 10.0, 2.0, 12.0, 40.0),
+               facade.Wallface(0.0, 10.0, 12.0, 22.0, 42.0)],
+    )
+    assert frame.wall_at(5, 0.0, 2.0) is None, "no wall below the plinth line"
+    assert frame.face_at(5, 0.0, 2.0) == 40.0, "the storey above it, not the front"
+    assert frame.face_at(5, 13.0, 20.0) == 42.0
+    assert frame.face_at(5, 11.5, 12.5) == 42.0, "a band spanning both takes the front"
+
+
+@needs_example
+def test_the_front_breaks_into_the_zones_the_building_has(gf_extract, ff_extract):
+    extracts = [gf_extract, ff_extract]
+    params = BuildParams(levels=[LevelParams(level=0, name="Ground floor"),
+                                 LevelParams(level=1, name="First floor")])
+    elevations = level_elevations(extracts, params)
+    f = facade.front_frame(extracts, elevations, "+y", params.plinth_ft)
+    zs = facade.zones(f)
+
+    assert len(zs) >= 2, "a front that steps is not one plane"
+    ends = {round(w.u0, 2) for w in f.faces} | {round(w.u1, 2) for w in f.faces}
+    for zn in zs[1:]:
+        assert round(zn.u0, 2) in ends, "a zone boundary is the end of a real wall"
+    tall = [z for z in zs if z.walls and z.top >= f.z_top - 1.0]
+    low = [z for z in zs if z.walls and z.top < f.z_top - 1.0]
+    assert tall and low, (
+        "the example is a two-storey block beside a single-storey wing"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # composition
 # --------------------------------------------------------------------------- #
 @needs_example
@@ -109,6 +175,100 @@ def test_the_elements_stack_in_a_depth_ladder(gf_extract, ff_extract):
     assert depth["canopy"] > depth["fin"]
 
 
+def _supported(frame, u: float, z0: float, z1: float) -> float:
+    """How much of a panel's height at ``u`` the building actually carries.
+
+    Walled counts, and so does anything below the lowest wall in the column —
+    that is the plinth, which the wall above it stands on.
+    """
+    runs = sorted((max(w.z0, z0), min(w.z1, z1)) for w in frame.faces
+                  if w.u0 - 0.05 <= u <= w.u1 + 0.05 and w.z1 > z0 and w.z0 < z1)
+    foot = min((w.z0 for w in frame.faces if w.u0 - 0.05 <= u <= w.u1 + 0.05),
+               default=z1)
+    if foot > z0:
+        runs = sorted(runs + [(z0, min(foot, z1))])
+    total, at = 0.0, z0
+    for a, b in runs:
+        total += max(0.0, b - max(a, at))
+        at = max(at, b)
+    return total / max(z1 - z0, 1e-9)
+
+
+@needs_example
+def test_no_element_is_composed_where_the_building_is_not(gf_extract, ff_extract):
+    """The regression this whole zone model exists for.
+
+    The composition used to be laid out in fractions of the overall width,
+    which on a building with a single-storey wing put the balcony recess, its
+    three slabs and the full-height screen over the wing's *roof* — a balcony
+    in mid-air, and the clutter that came with it.
+    """
+    f, panels, _p = _composed(gf_extract, ff_extract)
+    free = {"canopy", "fin", "post"}   # these stand off the building on purpose
+    checked = 0
+    for p in panels:
+        if p.kind in free or p.z1 - p.z0 < 2.0:
+            continue  # a band spans a floor line; that is not a defect
+        if p.kind == "recess" and "porch" in p.label.lower():
+            continue  # the porch *is* the absence of wall
+        for u in (p.u0 + 0.1, (p.u0 + p.u1) / 2, p.u1 - 0.1):
+            got = _supported(f, min(max(u, f.u0), f.u1), p.z0, p.z1)
+            assert got > 0.9, (
+                f"{p.kind} {p.label!r} at u={u:.1f} has building behind only "
+                f"{got:.0%} of its height"
+            )
+            checked += 1
+    assert checked, "nothing was checked"
+
+
+@needs_example
+def test_an_open_storey_under_an_overhang_is_drawn_as_a_porch(gf_extract, ff_extract):
+    """The example's first floor overhangs an open ground storey. That is the
+    deepest shadow the elevation has and it is already in the drawing — far
+    better than inventing a balcony somewhere else on the wall."""
+    f, panels, _p = _composed(gf_extract, ff_extract)
+    porch = [p for p in panels if p.kind == "recess" and "porch" in p.label.lower()]
+    assert porch, "an overhung open storey should be composed as a porch"
+    p = porch[0]
+    u = (p.u0 + p.u1) / 2
+    assert p.depth_ft < 0, "a porch goes back, not forward"
+    assert f.wall_at(u, p.z0 + 0.1, p.z1 - 0.1) is None, "a porch has no wall"
+    assert f.face_at(u, p.z0, p.z1) is not None, (
+        "but it is cut back from the floor above, which is what carries it"
+    )
+
+
+@needs_example
+def test_the_canopy_does_not_oversail_a_single_storey_wing(gf_extract, ff_extract):
+    f, panels, _p = _composed(gf_extract, ff_extract)
+    zs = facade.zones(f)
+    low = [z for z in zs if z.walls and z.top < f.z_top - 1.0]
+    assert low, "the example has a single-storey wing"
+    canopy = next(p for p in panels if p.kind == "canopy")
+    for zn in low:
+        over = min(canopy.u1, zn.u1) - max(canopy.u0, zn.u0)
+        assert over < zn.width * 0.5, (
+            "the roof canopy is at the top of the two-storey block; run across "
+            "the wing it floats ten feet above its roof"
+        )
+
+
+@needs_example
+def test_the_screen_and_the_clad_bay_land_in_different_zones(gf_extract, ff_extract):
+    f, panels, _p = _composed(gf_extract, ff_extract)
+    zs = facade.zones(f)
+
+    def zone_of(u):
+        return next(z for z in zs if z.u0 - 0.1 <= u <= z.u1 + 0.1)
+
+    fins = [p for p in panels if p.kind == "fin"]
+    mass = [p for p in panels if p.kind == "mass"]
+    assert fins and mass
+    a = zone_of(sum((p.u0 + p.u1) / 2 for p in fins) / len(fins))
+    b = zone_of(sum((p.u0 + p.u1) / 2 for p in mass) / len(mass))
+    assert a is not b, "the two heavy elements belong to different parts of the house"
+
+
 @needs_example
 def test_the_composition_is_asymmetric(gf_extract, ff_extract):
     """The reference elevations put their weight on one side. A screen and a
@@ -128,8 +288,42 @@ def test_the_screen_runs_past_the_canopy(gf_extract, ff_extract):
     roof it becomes a stripe."""
     f, panels, _p = _composed(gf_extract, ff_extract)
     fins = [p for p in panels if p.kind == "fin"]
+    canopy = next(p for p in panels if p.kind == "canopy")
     assert min(p.z0 for p in fins) <= f.z_ground + 0.1
-    assert max(p.z1 for p in fins) > f.z_top
+    assert max(p.z1 for p in fins) > canopy.z1, "it has to pass the canopy"
+
+
+@needs_example
+def test_the_canopy_caps_the_building_as_it_is_built(gf_extract, ff_extract):
+    """Placed at the top of the walls it is a dark band halfway up a white
+    parapet. It belongs on top of the parapet, finishing the building."""
+    f, panels, params = _composed(gf_extract, ff_extract)
+    canopy = next(p for p in panels if p.kind == "canopy")
+    assert canopy.z0 == pytest.approx(f.z_top + params.parapet_ft, abs=0.01)
+
+
+@needs_example
+def test_no_solid_panel_bricks_up_a_window(gf_extract, ff_extract):
+    """Elements are placed by where the building steps, so the clad bay lands
+    over the very window it exists to frame — and built solid it walls it up,
+    which it did to two of this building's three windows.
+
+    Fins and posts are excluded: a screen standing in front of a window is the
+    point of a screen.
+    """
+    f, panels, params = _composed(gf_extract, ff_extract)
+    elevations = level_elevations([gf_extract, ff_extract], params)
+    openings = facade.front_openings([gf_extract, ff_extract], elevations, f, params)
+    assert openings, "the front has windows"
+    for p in panels:
+        if p.kind not in facade.SOLID or p.hole:
+            continue
+        for a, b, z0, z1, _k in openings:
+            assert not (p.u0 < b - 0.1 and p.u1 > a + 0.1
+                        and p.z0 < z1 - 0.1 and p.z1 > z0 + 0.1), (
+                f"{p.kind} {p.label!r} covers the opening at "
+                f"u {a:.1f}..{b:.1f}, z {z0:.1f}..{z1:.1f}"
+            )
 
 
 @needs_example
@@ -161,12 +355,15 @@ def test_every_panel_carries_a_projection_depth(gf_extract, ff_extract):
 
 @needs_example
 def test_panels_stay_on_the_building(gf_extract, ff_extract):
-    f, panels, _p = _composed(gf_extract, ff_extract)
+    f, panels, params = _composed(gf_extract, ff_extract)
+    # `z_top` is the top of the *walls*. The parapet stands three feet above it
+    # and the canopy caps that, so the building as built is taller than z_top.
+    cap = facade._cap(params, f.z_top) + params.facade.canopy_thickness_ft
     for p in panels:
         if p.kind == "canopy":
             continue  # the canopy oversails on purpose
         assert p.u0 >= f.u0 - 1.5 and p.u1 <= f.u1 + 1.5, p.label
-        assert p.z0 >= -0.1 and p.z1 <= f.z_top + 1.5, p.label
+        assert p.z0 >= -0.1 and p.z1 <= cap + 0.7, p.label
 
 
 @needs_example
@@ -286,3 +483,18 @@ def test_a_panel_steps_with_the_wall_behind_it():
     )
     panels = [Panel(id="a", kind="band", u0=0, u1=20, z0=10, z1=11, depth_ft=0.5)]
     assert facade.build(scene, panels, frame) == 2, "one piece per wall plane"
+
+
+def test_a_panel_on_one_plane_is_one_box_however_many_walls_make_it():
+    """The splitter cuts at the end of every wall on the front, so most cuts
+    fall inside a single plane. Left unwelded they leave boxes meeting face to
+    face — z-fighting in the viewer, and triangles for nothing."""
+    scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
+    frame = facade.Frame(
+        side="+y", face=40.0, u0=0.0, u1=30.0, z_ground=0.0, z_top=20.0,
+        faces=[facade.Wallface(0.0, 10.0, 0.0, 20.0, 40.0),
+               facade.Wallface(10.0, 20.0, 0.0, 20.0, 40.0),
+               facade.Wallface(20.0, 30.0, 0.0, 20.0, 40.0)],
+    )
+    panels = [Panel(id="a", kind="band", u0=0, u1=30, z0=9, z1=10, depth_ft=0.4)]
+    assert facade.build(scene, panels, frame) == 1

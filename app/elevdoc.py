@@ -75,17 +75,25 @@ def elevation(
     # fit the elevation into the sheet, leaving room for the chains and a legend
     left, right = MARGIN + 96, PAGE_W - MARGIN - 250
     top, bottom = MARGIN + 58, PAGE_H - MARGIN - 76
-    fw = max(frame.width, 1e-6)
-    fh = max(frame.z_top - frame.z_ground, 1e-6)
+    # The drawing has to hold everything composed, not just the walls. The
+    # canopy caps the parapet and the screen oversails that, both of them well
+    # above `z_top`; scaled to the walls alone they are drawn off the top of
+    # the sheet, floating over the title.
+    zlo = min([frame.z_ground] + [p.z0 for p in panels])
+    zhi = max([frame.z_top] + [p.z1 for p in panels])
+    ulo = min([frame.u0] + [p.u0 for p in panels])
+    uhi = max([frame.u1] + [p.u1 for p in panels])
+    fw = max(uhi - ulo, 1e-6)
+    fh = max(zhi - zlo, 1e-6)
     s = min((right - left) / fw, (bottom - top) / fh)
     ox = left + ((right - left) - fw * s) / 2
     oy = bottom
 
     def px(u: float) -> float:
-        return ox + (u - frame.u0) * s
+        return ox + (u - ulo) * s
 
     def py(z: float) -> float:
-        return oy - (z - frame.z_ground) * s
+        return oy - (z - zlo) * s
 
     # panels, back to front, each in its own material colour
     for p in panels:
@@ -103,12 +111,18 @@ def elevation(
             d.rect(x0, y0, x1, y1, fill, INK, 0.4 if p.kind != "field" else 0.7)
 
     # the lvl tag on every panel that stands proud, exactly as the sheet does it
+    placed: list[tuple[float, float]] = []
     for p in panels:
         if abs(p.depth_ft) < 0.01 and p.kind != "field":
             continue
         cx, cy = (px(p.u0) + px(p.u1)) / 2, (py(p.z0) + py(p.z1)) / 2
         if px(p.u1) - px(p.u0) < 26 or py(p.z0) - py(p.z1) < 11:
             continue
+        # a box frame sits centred on the panel it stands on, so their two tags
+        # land on the same spot and print through each other
+        if any(abs(cx - x) < 34 and abs(cy - y) < 9 for x, y in placed):
+            continue
+        placed.append((cx, cy))
         d.text(cx, cy + 2.5, f"lvl {_lvl(p.depth_ft)}", 7.2, LVL, "middle")
 
     _height_chain(d, panels, frame, px, py)

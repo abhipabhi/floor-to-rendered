@@ -795,12 +795,111 @@ let renderer, scene3, camera, controls, modelRoot, frameSize = 20;
 // that drift apart. These are the fallbacks for before the first build lands.
 let SKY = {
   elevation_deg: 34, bearing_deg: 118,
-  turbidity: 2.8, rayleigh: 1.5, mie: 0.005, mie_g: 0.80,
+  turbidity: 2.8, rayleigh: 0.34, mie: 0.005, mie_g: 0.80,
   sun_hex: '#FFEACB', sun_intensity: 3.0,
   hemi_sky_hex: '#BCD6F2', hemi_ground_hex: '#7D7565', hemi_intensity: 0.28,
   ground_hex: '#A8B189', exposure: 1.0, background_intensity: 0.26,
+  cloud_hex: '#FDFEFF', cloud_scale: 4.2, cloud_cover: 0.44,
+  cloud_softness: 0.16,
 };
-let skyDome, skyCube, sunLight, hemiLight, contextGround;
+let skyDome, skyCube, sunLight, hemiLight, contextGround, cloudDome;
+
+// ── procedural noise ──────────────────────────────────────────────────────
+// The clouds and the ground both need something with structure in it, and the
+// page ships no image assets — everything here is generated, same as the wall
+// textures the model carries. Value noise summed over octaves, on a canvas
+// that wraps, so a sphere or a tiled plane has no seam.
+function fbmCanvas(size, octaves, wrap = true) {
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size / 2 | 0;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(cv.width, cv.height);
+  const rnd = [];
+  const seed = (x, y, p) => {
+    const k = ((x & 255) * 73856093 ^ (y & 255) * 19349663 ^ p * 83492791) >>> 0;
+    return (rnd[k % 4096] ??= Math.random());
+  };
+  const lerp = (a, b, t) => a + (b - a) * t * t * (3 - 2 * t);
+  const value = (x, y, p, period) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const w = (v) => (wrap ? ((v % period) + period) % period : v);
+    const s = (a, b) => seed(w(a), w(b), p);
+    return lerp(lerp(s(xi, yi), s(xi + 1, yi), xf),
+                lerp(s(xi, yi + 1), s(xi + 1, yi + 1), xf), yf);
+  };
+  for (let y = 0; y < cv.height; y++) {
+    for (let x = 0; x < cv.width; x++) {
+      let v = 0, amp = 0.5, period = 4;
+      for (let o = 0; o < octaves; o++) {
+        v += amp * value(x / cv.width * period, y / cv.height * period, o, period);
+        amp *= 0.5; period *= 2;
+      }
+      const i = (y * cv.width + x) * 4;
+      const c = Math.max(0, Math.min(255, v * 255)) | 0;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = c;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+// the same tight ramp the Blender clouds use: it is what turns smooth fog into
+// shapes with edges, and without it the layer reads as a dirty lens
+function rampCanvas(src, lo, hi, floor = 0) {
+  const cv = document.createElement('canvas');
+  cv.width = src.width; cv.height = src.height;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(src, 0, 0);
+  const img = ctx.getImageData(0, 0, cv.width, cv.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const t = Math.max(0, Math.min(1, (img.data[i] / 255 - lo) / Math.max(1e-6, hi - lo)));
+    const v = ((floor + (1 - floor) * t * t * (3 - 2 * t)) * 255) | 0;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+function buildClouds(scene) {
+  // A dome, for the reason the Blender scene uses one: a cloud plane overhead
+  // is seen edge-on from eye level and foreshortens into horizontal streaks.
+  // A cap over the sky, not a full sphere. A whole dome wraps below the
+  // horizon too, so looking level or down you are seeing the underside of the
+  // cloud layer and the entire view fogs over.
+  const geo = new THREE.SphereGeometry(
+    3200, 48, 20, 0, Math.PI * 2, 0, Math.PI * 0.40);
+  const mat = new THREE.MeshBasicMaterial({
+    color: SKY.cloud_hex,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+    fog: false,
+    toneMapped: false,
+    opacity: 0.72,
+  });
+  cloudDome = new THREE.Mesh(geo, mat);
+  cloudDome.name = 'Sky clouds';
+  cloudDome.position.y = 0;
+  cloudDome.renderOrder = -1;
+  scene.add(cloudDome);
+  return cloudDome;
+}
+
+function applyClouds() {
+  if (!cloudDome) return;
+  const noise = fbmCanvas(1024, 6);
+  const tex = new THREE.CanvasTexture(
+    rampCanvas(noise, SKY.cloud_cover + 0.06,
+               SKY.cloud_cover + 0.06 + SKY.cloud_softness));
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(SKY.cloud_scale / 4.2, SKY.cloud_scale / 4.2);
+  if (cloudDome.material.alphaMap) cloudDome.material.alphaMap.dispose();
+  cloudDome.material.alphaMap = tex;
+  cloudDome.material.color.set(SKY.cloud_hex);
+  cloudDome.material.needsUpdate = true;
+}
 
 function sunVector(distance = 1) {
   const phi = THREE.MathUtils.degToRad(90 - SKY.elevation_deg);
@@ -848,28 +947,26 @@ function applySky(renderer, scene) {
     hemiLight.intensity = SKY.hemi_intensity;
   }
   if (contextGround) contextGround.material.color.set(SKY.ground_hex);
+  applyClouds();
   renderer.toneMappingExposure = SKY.exposure;
 
+  // PMREM needs the dome in a scene of its own; put it back afterwards, because
+  // the dome *is* the background here.
   const envScene = new THREE.Scene();
   envScene.add(skyDome);
-
-  // The background is a straight cube render of the dome. PMREM's output is a
-  // prefiltered mip chain — right for reflections, and as a background it is
-  // the blurred level, which comes out as murk.
-  if (!skyCube) skyCube = new THREE.WebGLCubeRenderTarget(1024, {
-    type: THREE.HalfFloatType,
-  });
-  new THREE.CubeCamera(1, 5000, skyCube).update(renderer, envScene);
-  scene.background = skyCube.texture;
-  scene.backgroundIntensity = SKY.background_intensity;
-
-  // and PMREM of the same dome for what the model reflects
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
   const env = pmrem.fromScene(envScene).texture;
   pmrem.dispose();
   if (scene.environment) scene.environment.dispose();
   scene.environment = env;
+
+  // Drawn as a mesh, not as scene.background. Rendering it to a texture and
+  // scaling it with backgroundIntensity keeps ACES from blowing it out, but
+  // the price is that everything comes back grey-mauve — a dim sky is a dim
+  // sky whichever route it takes. A pale blue is better than murk.
+  scene.background = null;
+  scene.add(skyDome);
 }
 
 function setSky(preset) {
@@ -902,15 +999,27 @@ function initViewer() {
   // Context ground. The exported model carries the plot only; this is the land
   // it sits in, so that looking down at the building shows ground rather than
   // the underside of the sky, which in the sky model is a washed-out neutral.
+  // Textured, not a flat colour. Four thousand metres of one green is a sheet
+  // of card and reads as one however good the sky above it is.
+  // Fine grain, and only a little of it. Tiled coarsely it reads as blotches
+  // of mud rather than as ground, and multiplied over the full 0..1 range it
+  // halves the colour — the sage green came out brown.
+  const grain = new THREE.CanvasTexture(
+    rampCanvas(fbmCanvas(256, 4), 0.3, 0.7, 0.90));
+  grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
+  grain.repeat.set(320, 320);
   const ctx = new THREE.Mesh(
     new THREE.CircleGeometry(4000, 96).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: SKY.ground_hex, roughness: 1.0 })
+    new THREE.MeshStandardMaterial({
+      color: SKY.ground_hex, roughness: 1.0, map: grain,
+    })
   );
   ctx.position.y = -0.18;
   ctx.receiveShadow = true;
   ctx.name = 'Context ground';
   scene3.add(ctx);
   contextGround = ctx;
+  buildClouds(scene3);
 
   camera = new THREE.PerspectiveCamera(36, 1, 0.1, 6000);
   // Stand it off the target before OrbitControls ever sees it. The render loop
@@ -1010,11 +1119,14 @@ function setView(which) {
   // down its own up-axis has no defined roll and lands at a random angle
   // north is −Z, so the four elevations are named for the way they face
   const p = {
-    iso: [r * 1.15, r * 0.42, r * 1.15],
-    south: [0, r * 0.36, r * 1.5],
-    north: [0, r * 0.36, -r * 1.5],
-    east: [r * 1.5, r * 0.36, 0],
-    west: [-r * 1.5, r * 0.36, 0],
+    // Low, the way a house is photographed. At r*0.42 the camera looks down
+    // on a four-kilometre ground plane and the frame is nine parts field to
+    // one part sky, which is most of why the viewer read as murky.
+    iso: [r * 1.25, r * 0.16, r * 1.25],
+    south: [0, r * 0.13, r * 1.6],
+    north: [0, r * 0.13, -r * 1.6],
+    east: [r * 1.6, r * 0.13, 0],
+    west: [-r * 1.6, r * 0.13, 0],
     top: [0, r * 1.85, r * 0.3],
   }[which];
   camera.position.set(c.x + p[0], c.y + p[1], c.z + p[2]);

@@ -28,7 +28,6 @@ SLOTS = [
     ("door", "Doors"),
     ("glazing", "Glazing"),
     ("curtain", "Curtains"),
-    ("light", "Light fittings"),
     ("railing", "Railings"),
     ("ground", "Ground"),
     ("drive", "Driveway and paving"),
@@ -171,8 +170,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#8B5E3C", "wood"),             # teak
             "frame": ("#3D4249", None),
             "glazing": ("#8FA8B8", None),
-            "curtain": ("#A6C9EA", None),
-            "light": ("#FFE7BE", None),
+            "curtain": ("#6E93B8", None),
             "railing": ("#3D4249", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -201,8 +199,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#7A5230", "wood"),
             "frame": ("#33373B", None),
             "glazing": ("#8FB6CC", None),
-            "curtain": ("#AFCEEA", None),
-            "light": ("#FFE9C4", None),
+            "curtain": ("#7398BC", None),
             "railing": ("#3A3E42", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -227,8 +224,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#8A5A2B", "wood"),
             "frame": ("#4A3B2A", "wood"),
             "glazing": ("#9DC0D2", None),
-            "curtain": ("#B6D5EE", None),
-            "light": ("#FFEBCA", None),
+            "curtain": ("#7A9FC2", None),
             "railing": ("#5C4A34", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -253,8 +249,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#8A6238", "wood"),
             "frame": ("#5A5550", None),
             "glazing": ("#9FC4D6", None),
-            "curtain": ("#B2D0EA", None),
-            "light": ("#FFE8C2", None),
+            "curtain": ("#769BBE", None),
             "railing": ("#B7C3CB", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -279,8 +274,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#6E4A2C", "wood"),
             "frame": ("#3B3733", None),
             "glazing": ("#93B9CC", None),
-            "curtain": ("#A8C7E6", None),
-            "light": ("#FFE4B8", None),
+            "curtain": ("#7093B4", None),
             "railing": ("#4A4E52", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -305,8 +299,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#3A3E42", "wood"),
             "frame": ("#2E3236", None),
             "glazing": ("#A8CBDC", None),
-            "curtain": ("#BAD8F0", None),
-            "light": ("#FFEDD2", None),
+            "curtain": ("#7FA4C6", None),
             "railing": ("#9FB0BA", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -331,8 +324,7 @@ PRESETS: dict[str, dict] = {
             "door": ("#7A4B24", "wood"),
             "frame": ("#6B563C", None),
             "glazing": ("#A6C6D2", None),
-            "curtain": ("#B4D2EA", None),
-            "light": ("#FFE6BE", None),
+            "curtain": ("#799DBE", None),
             "railing": ("#8A7A63", None),
             "ground": ("#7C9A5E", "grass"),
             "drive": ("#BFBBB4", "paving"),
@@ -346,7 +338,6 @@ DEFAULT_PRESET = "elevation_spec"
 
 ROUGHNESS = {
     "glazing": 0.08,
-    "light": 0.35,
     "curtain": 0.95,
     "frame": 0.45,
     "railing": 0.25,
@@ -356,9 +347,8 @@ ROUGHNESS = {
     "drive": 0.95,
 }
 METALLIC = {"railing": 0.6}
-#: A lamp is a surface that emits, not a pale surface. Without this a
-#: light fitting in a daylit render is a grey blob on the wall.
-EMISSIVE = {"light": 2.6}
+#: nothing emits today; the plumbing stays because the material model needs it
+EMISSIVE: dict[str, float] = {}
 ALPHA = {"glazing": 0.32, "railing": 0.55}
 
 

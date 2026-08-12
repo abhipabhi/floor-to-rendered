@@ -29,11 +29,11 @@ class Sky:
     elevation_deg: float
     bearing_deg: float
 
-    #: Preetham, for the viewer's sky dome. `rayleigh` is the one that matters:
-    #: it sets how much short-wavelength light scatters, so it is what makes the
-    #: difference between a deep blue noon and an orange dawn. The old viewer
-    #: ran at 0.16, which is barely any scattering at all — hence a sky that
-    #: came out pale grey-white and read as haze.
+    #: Preetham, and **only** the viewer uses these — Blender's Nishita sky has
+    #: no rayleigh term, it scatters from the air/dust/ozone densities below.
+    #: That distinction matters: values that make Nishita look right are far too
+    #: high for Preetham, whose output is already enormous, and ACES then maps
+    #: the lot to grey. Keep these low.
     turbidity: float
     rayleigh: float
     mie: float
@@ -113,7 +113,7 @@ SKIES: dict[str, Sky] = {
         elevation_deg=6.0,
         bearing_deg=84.0,
         turbidity=5.4,
-        rayleigh=3.2,
+        rayleigh=0.85,
         mie=0.010,
         mie_g=0.87,
         air_density=1.5,
@@ -146,7 +146,7 @@ SKIES: dict[str, Sky] = {
         elevation_deg=34.0,
         bearing_deg=118.0,
         turbidity=2.8,
-        rayleigh=1.5,
+        rayleigh=0.34,
         mie=0.005,
         mie_g=0.80,
         air_density=1.0,
@@ -179,7 +179,7 @@ SKIES: dict[str, Sky] = {
         elevation_deg=72.0,
         bearing_deg=172.0,
         turbidity=2.1,
-        rayleigh=1.1,
+        rayleigh=0.26,
         mie=0.004,
         mie_g=0.78,
         air_density=0.9,

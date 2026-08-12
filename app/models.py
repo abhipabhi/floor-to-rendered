@@ -261,7 +261,6 @@ PanelKind = Literal[
     "frame",    # a surround standing proud of an opening
     "canopy",   # the deep plane across the top
     "pier",
-    "lamp",     # a wall light, emissive so it reads as a fitting
 ]
 
 
@@ -333,13 +332,6 @@ class FacadeParams(BaseModel):
     fin_pitch_ft: float = 0.72
     fin_projection_ft: float = 2.0
     screen_width_ft: float = 4.0
-    #: wall lights: either side of the way in, in the porch, and on the upper
-    #: wall. Emissive, so they read as fittings by day and as the only warm
-    #: thing in the picture at dusk.
-    lamps: bool = True
-    lamp_width_ft: float = 0.42
-    lamp_height_ft: float = 1.15
-    lamp_height_above_floor_ft: float = 6.6
     canopy: bool = True
     canopy_projection_ft: float = 3.15  # the document's own lvl +3'2"
     canopy_thickness_ft: float = 0.9

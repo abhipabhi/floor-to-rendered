@@ -156,22 +156,25 @@ def _inset(mesh, wall: Wall, a: float, b: float, z0: float, z1: float,
 #: how many folds a curtain is gathered into, per foot of window
 CURTAIN_FOLDS_PER_FT = 1.15
 #: how deep a fold is, as a fraction of the fold's own width
-CURTAIN_FOLD_DEPTH = 0.55
+CURTAIN_FOLD_DEPTH = 0.62
+#: where the tie sits, as a fraction of the opening height
+CURTAIN_TIE_AT = 0.46
 
 
 def _curtains(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float,
               outer: float, normal: float, d, group: str) -> None:
-    """A curtain drawn across the window, gathered into vertical folds.
+    """A curtain across the window, gathered to a tie at the centre.
 
-    Drawn, not tied back. The job is to close the opening: an empty window is a
-    hole into an unmodelled interior, and the eye goes straight to it. Tied back
-    at the sides it looks better as a curtain and does not do the job, because
-    the middle — the part you actually see through — is still a hole.
+    It closes the opening: an empty window is a hole into an unmodelled
+    interior and the eye goes straight to it, so the fabric covers the whole
+    aperture. Tied back at the *sides* it looks more like a curtain and does
+    not do that job, because the middle — the part you see through — is still
+    a hole.
 
-    The folds are what stop it reading as a flat blue card. Each is a shallow
-    V in plan, so the light catches one side of every fold and not the other,
-    which is all the shading needed at this scale. It hangs *inside*, behind
-    the reveal and the glass.
+    So the tie is in the middle instead. The fabric hangs full width at the
+    rail, is drawn in to a band at mid height, and falls away again below:
+    the folds deepen as they approach the tie, which is what reads as gathered
+    rather than as a blue card with a stripe across it.
     """
     span, height = b - a, z1 - z0
     if span < 0.9 or height < 1.2:
@@ -179,31 +182,45 @@ def _curtains(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float
     m = scene.mesh(f"{group} curtains", "curtain")
     # behind the pane and behind the reveal, hanging in the room
     front = outer - normal * (d.reveal_ft + 0.22)
-    depth = min(0.30, span * 0.12)
+    depth = min(0.34, span * 0.14)
 
-    folds = max(3, int(round(span * CURTAIN_FOLDS_PER_FT)))
+    folds = max(4, int(round(span * CURTAIN_FOLDS_PER_FT)))
     step = span / folds
-    zag = min(depth * CURTAIN_FOLD_DEPTH, step * 0.45)
+    zag = min(depth * CURTAIN_FOLD_DEPTH, step * 0.5)
+    tie = z0 + height * CURTAIN_TIE_AT
+    courses = 8
 
     def p(u: float, z: float, c: float):
         """A point, from the wall's own along/height/across axes into model xyz."""
         return (u, z, c) if wall.axis == "h" else (c, z, u)
 
-    across = (0.0, 0.0, 1.0) if wall.axis == "h" else (1.0, 0.0, 0.0)
-    # the pleat line: alternately at the front of the curtain and set back
-    pts = []
-    for i in range(folds + 1):
-        u = a + i * step
-        pts.append((u, front - normal * (zag if i % 2 else 0.0)))
+    def gather(z: float) -> float:
+        """How gathered the fabric is at this height: 1 at the tie, 0 at the ends."""
+        t = abs(z - tie) / max(1e-6, max(tie - z0, z1 - tie))
+        return 1.0 - min(1.0, t) ** 1.6
 
-    for (ua, ca), (ub, cb) in zip(pts, pts[1:]):
-        # the face of the fold, both ways round so it is solid from inside too
-        for flip in (1.0, -1.0):
-            n = tuple(v * flip * (1.0 if normal > 0 else -1.0) for v in across)
-            quad = (p(ua, z0, ca), p(ub, z0, cb), p(ub, z1, cb), p(ua, z1, ca))
-            mesh_quad = quad if flip > 0 else quad[::-1]
-            m.add_quad(*_m(mesh_quad), n)
-    # a rail across the head, so the curtain hangs from something
+    across = (0.0, 0.0, 1.0) if wall.axis == "h" else (1.0, 0.0, 0.0)
+    zs = [z0 + height * i / courses for i in range(courses + 1)]
+
+    for j in range(courses):
+        za, zb = zs[j], zs[j + 1]
+        ga, gb = gather(za), gather(zb)
+        for i in range(folds):
+            ua, ub = a + i * step, a + (i + 1) * step
+            # each pleat swings back and forth, and swings further where the
+            # fabric is drawn in to the tie
+            ca = front - normal * zag * (1.0 if i % 2 else 0.0) * (0.35 + 0.65 * ga)
+            cb = front - normal * zag * (0.0 if i % 2 else 1.0) * (0.35 + 0.65 * gb)
+            for flip in (1.0, -1.0):
+                n = tuple(v * flip * (1.0 if normal > 0 else -1.0) for v in across)
+                quad = (p(ua, za, ca), p(ub, za, cb), p(ub, zb, cb), p(ua, zb, ca))
+                m.add_quad(*_m(quad if flip > 0 else quad[::-1]), n)
+
+    # the tie itself, and a rail at the head for the curtain to hang from
+    band = max(0.16, height * 0.05)
+    _box_across(m, wall, a + span * 0.30, b - span * 0.30, tie - band / 2,
+                tie + band / 2, front + normal * 0.03,
+                front - normal * (zag + 0.05))
     _box_across(m, wall, a, b, z1 - 0.12, z1,
                 front + normal * 0.02, front - normal * (zag + 0.06))
 

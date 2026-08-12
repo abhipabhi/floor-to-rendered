@@ -204,9 +204,8 @@ def sheet_readings(
         # plan. The datum fit rejects them anyway, because chainages rise going
         # down the sheet and levels rise going up, but the guard is the classifier.
         if si.kind in (ELEVATION, SECTION):
-            found = elevation.read_datum(sheet)
-            if found is not None:
-                out.extend(elevation.readings(found, si.id, levels))
+            _found, elev_readings = elevation.read_sheet(sheet, si.id, levels)
+            out.extend(elev_readings)
     return out
 
 

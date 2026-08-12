@@ -209,16 +209,322 @@ def fit_datum(tags: list[LevelTag], units: str = "metric") -> Datum | None:
     )
 
 
+#: how far from its line a level tag's text may sit
+SNAP_PT = 14.0
+
+
+def snap_to_level_lines(sheet: Sheet, tags: list[LevelTag]) -> list[LevelTag]:
+    """Move each tag onto the level line it annotates.
+
+    A level tag is text written *beside* its line, not on it — above it, below
+    it, inside a bubble on a leader. Fitting the text positions gives the right
+    scale, because a constant offset cancels in the gradient, but it puts the
+    datum itself wherever the lettering happened to sit. That does not matter
+    for a storey height, which is a difference between two tags, and matters a
+    great deal for a sill, which is measured from the datum outright.
+
+    The correction is one shift applied to every tag, not a per-tag snap. A
+    drafter writes the lettering the same way each time, so the offset is a
+    constant — and taking the median of it is what stops a single tag being
+    dragged onto the wrong line. There is usually other linework within a few
+    points of a level: on the test sheet the +3.60 tag sat nearer a string
+    course at 3.55 than its own line, and snapping it individually put a real
+    0.93" of error into a fit that had been exact.
+
+    A uniform shift also leaves the scale untouched, which was already right.
+    """
+    import statistics
+
+    from . import geom
+
+    lines = [r.pos for r in geom.build_runs(sheet.segs, "h") if r.b - r.a > 20.0]
+    if not lines or not tags:
+        return tags
+    offsets = []
+    for tag in tags:
+        near = min(lines, key=lambda y: abs(y - tag.y_px))
+        if abs(near - tag.y_px) <= SNAP_PT:
+            offsets.append(near - tag.y_px)
+    if not offsets:
+        return tags
+    shift = statistics.median(offsets)
+    return [
+        LevelTag(value_ft=t.value_ft, y_px=t.y_px + shift, raw=t.raw) for t in tags
+    ]
+
+
 def read_datum(sheet: Sheet) -> Datum | None:
     """The datum an elevation or section sheet was drawn to."""
     system: UnitSystem = detect_units(sheet.text)
-    tags = find_level_tags(sheet, system.units)
+    tags = snap_to_level_lines(sheet, find_level_tags(sheet, system.units))
     return fit_datum(tags, system.units)
+
+
+def read_sheet(sheet: Sheet, sheet_id: str, levels: list[int] | None = None):
+    """Everything one elevation or section states, as readings.
+
+    Returns ``(datum, readings)``. Without a datum nothing else is attempted:
+    a sill measured against a scale that was never established is a number with
+    no meaning, and would be worse than the setting it replaced.
+    """
+    datum = read_datum(sheet)
+    if datum is None:
+        return None, []
+    out = readings(datum, sheet_id, levels)
+    openings = find_openings(sheet, datum)
+    out += opening_readings(opening_levels(datum, openings, levels), datum, sheet_id)
+    parapet = parapet_height(sheet, datum)
+    if parapet is not None:
+        out.append(Reading(key="building.parapet_ft", q=Quantity(
+            ft=parapet, source="measured", method="elevation_parapet",
+            confidence=datum.confidence, sheet_id=sheet_id,
+            evidence=f"wall carries {_fmt(parapet, datum.units)} above the roof level",
+        )))
+    return datum, out
+
+
+# --------------------------------------------------------------------------- #
+# openings, read against the datum
+# --------------------------------------------------------------------------- #
+#: an opening in elevation is at least this wide and tall, and at most this big
+MIN_OPENING_FT, MAX_OPENING_FT = 1.0, 14.0
+#: how far a rectangle's corners may miss each other, in points
+CLOSE_PT = 1.6
+#: sills land in 1½-inch bins; CAD repeats a level exactly, so they spike
+SILL_BIN_FT = 0.125
+#: a second spike this close in size to the first is a real second value
+RIVAL = 0.6
+
+
+@dataclass(frozen=True)
+class Opening:
+    """A rectangle on an elevation: a window or a door, in sheet points."""
+
+    x0: float
+    y_top: float
+    x1: float
+    y_bottom: float
+    pen: float
+
+    @property
+    def width_pt(self) -> float:
+        return self.x1 - self.x0
+
+    @property
+    def height_pt(self) -> float:
+        return self.y_bottom - self.y_top
+
+
+def find_openings(sheet: Sheet, datum: Datum) -> list[Opening]:
+    """Closed rectangles on the sheet, sized like openings.
+
+    Worked from raw segments rather than from :func:`geom.build_runs`, which
+    merges collinear lines: three window heads at the same height on one storey
+    become a single twenty-foot run, and every one of them is then too wide to
+    be an opening. Here each drawn line stays its own line, and a rectangle is
+    two of them at the same extent closed by two more.
+    """
+    from .geom import pen_class
+
+    px = datum.px_per_ft
+    lo, hi = MIN_OPENING_FT * px, MAX_OPENING_FT * px
+
+    hs: list[tuple[float, float, float, float]] = []  # pos, a, b, pen
+    vs: list[tuple[float, float, float, float]] = []
+    for s in sheet.segs:
+        dx, dy = abs(s.x1 - s.x0), abs(s.y1 - s.y0)
+        if dy <= 0.25 and dx > 1.0:
+            hs.append(((s.y0 + s.y1) / 2, min(s.x0, s.x1), max(s.x0, s.x1),
+                       pen_class(s.width)))
+        elif dx <= 0.25 and dy > 1.0:
+            vs.append(((s.x0 + s.x1) / 2, min(s.y0, s.y1), max(s.y0, s.y1),
+                       pen_class(s.width)))
+
+    out: list[Opening] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for i, (ytop, ax, bx, pen) in enumerate(hs):
+        for ybot, ax2, bx2, pen2 in hs[i + 1:]:
+            if pen2 != pen:
+                continue
+            top, bottom = min(ytop, ybot), max(ytop, ybot)
+            height = bottom - top
+            if not (lo <= height <= hi):
+                continue
+            # the two horizontals must be the same line, not merely overlapping
+            if abs(ax - ax2) > CLOSE_PT or abs(bx - bx2) > CLOSE_PT:
+                continue
+            if not (lo <= bx - ax <= hi):
+                continue
+            if not (_has_side(vs, pen, ax, top, bottom)
+                    and _has_side(vs, pen, bx, top, bottom)):
+                continue
+            key = (round(ax), round(top), round(bx), round(bottom))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(Opening(ax, top, bx, bottom, pen))
+    return _drop_nested(out)
+
+
+def _drop_nested(openings: list[Opening], inset: float = 4.0) -> list[Opening]:
+    """Keep the outer of two rectangles drawn one inside the other.
+
+    A window is drawn as a frame with the glass inside it, so it registers
+    twice, a couple of points apart. Left in, the pair shows up as two sill
+    heights on the same storey and gets reported as a genuine second value.
+    """
+    out: list[Opening] = []
+    for op in sorted(openings, key=lambda o: -(o.width_pt * o.height_pt)):
+        if any(
+            k.x0 - inset <= op.x0 and k.y_top - inset <= op.y_top
+            and k.x1 + inset >= op.x1 and k.y_bottom + inset >= op.y_bottom
+            for k in out
+        ):
+            continue
+        out.append(op)
+    return out
+
+
+def _has_side(vs, pen: float, x: float, y_top: float, y_bottom: float) -> bool:
+    """Is there a vertical line at ``x`` closing this pair of horizontals?"""
+    for pos, a, b, vpen in vs:
+        if vpen != pen or abs(pos - x) > CLOSE_PT:
+            continue
+        if a <= y_top + CLOSE_PT and b >= y_bottom - CLOSE_PT:
+            return True
+    return False
+
+
+def _dominant(values: list[float], bin_ft: float = SILL_BIN_FT):
+    """The value CAD repeated, plus any genuine rival — never an average.
+
+    Returns ``(value, count, rivals)``. A drawing that uses two sill heights —
+    1100 in the bedrooms, 650 in the living room, which is a real convention —
+    has two spikes, and both are reported. Averaging them would produce a sill
+    height that appears nowhere on the drawing.
+    """
+    if not values:
+        return None, 0, []
+    import statistics
+    from collections import Counter
+
+    groups: dict[int, list[float]] = {}
+    for v in values:
+        groups.setdefault(round(v / bin_ft), []).append(v)
+    ranked = Counter({k: len(vs) for k, vs in groups.items()}).most_common()
+    best, n = ranked[0]
+    # The bin only decides *which* readings belong together. Reporting its
+    # centre would hand back a quantised number no line on the drawing sits at,
+    # so the answer is the median of the readings themselves.
+    rivals = [statistics.median(groups[k]) for k, c in ranked[1:] if c >= RIVAL * n]
+    return statistics.median(groups[best]), n, rivals
+
+
+@dataclass
+class OpeningLevels:
+    """Sill and head heights above their own storey's floor, per storey."""
+
+    sill_ft: dict[int, float] = field(default_factory=dict)
+    head_ft: dict[int, float] = field(default_factory=dict)
+    samples: dict[int, int] = field(default_factory=dict)
+    rivals: dict[int, list[float]] = field(default_factory=dict)
+
+
+def opening_levels(
+    datum: Datum, openings: list[Opening], levels: list[int] | None = None
+) -> OpeningLevels:
+    """Group openings by the storey they sit on and find each storey's sill.
+
+    A sill is measured from the floor it belongs to, so every opening is first
+    assigned to the highest stated level at or below it. That is why this needs
+    the datum and not just the rectangles.
+    """
+    floors = _distinct([t.value_ft for t in datum.tags])
+    if not floors:
+        return OpeningLevels()
+    order = sorted(levels) if levels else list(range(len(floors)))
+
+    per_floor: dict[int, list[tuple[float, float]]] = {}
+    for op in openings:
+        sill = datum.level_at(op.y_bottom)
+        head = datum.level_at(op.y_top)
+        idx = max((i for i, f in enumerate(floors) if f <= sill + 0.05), default=None)
+        if idx is None or idx >= len(order):
+            continue
+        per_floor.setdefault(order[idx], []).append((sill - floors[idx], head - floors[idx]))
+
+    out = OpeningLevels()
+    for level, pairs in per_floor.items():
+        sill, n, rivals = _dominant([p[0] for p in pairs])
+        head, _n2, _r2 = _dominant([p[1] for p in pairs])
+        if sill is None or head is None or head <= sill:
+            continue
+        out.sill_ft[level] = round(sill, 4)
+        out.head_ft[level] = round(head, 4)
+        out.samples[level] = n
+        if rivals:
+            out.rivals[level] = [round(r, 4) for r in rivals]
+    return out
+
+
+def parapet_height(sheet: Sheet, datum: Datum) -> float | None:
+    """How far the wall carries on above the topmost stated level.
+
+    The roof line is the highest level tag; anything drawn above it is the
+    parapet. Measured as the distance from that level to the highest long
+    horizontal line on the sheet.
+    """
+    from . import geom
+
+    floors = _distinct([t.value_ft for t in datum.tags])
+    if not floors:
+        return None
+    roof = floors[-1]
+    px = datum.px_per_ft
+    top = None
+    for run in geom.build_runs(sheet.segs, "h"):
+        if run.b - run.a < 3.0 * px:  # a parapet runs the width of the building
+            continue
+        level = datum.level_at(run.pos)
+        if level <= roof + 0.05:
+            continue
+        top = level if top is None else max(top, level)
+    if top is None:
+        return None
+    height = top - roof
+    return round(height, 4) if 0.5 <= height <= 8.0 else None
 
 
 # --------------------------------------------------------------------------- #
 # what it contributes to the model
 # --------------------------------------------------------------------------- #
+def opening_readings(
+    levels: OpeningLevels, datum: Datum, sheet_id: str
+) -> list[Reading]:
+    """Sill and lintel heights, per storey, from the openings drawn on the face."""
+    out: list[Reading] = []
+    for level, sill in levels.sill_ft.items():
+        rivals = levels.rivals.get(level, [])
+        out.append(Reading(key=f"level.{level}.window_sill_ft", q=Quantity(
+            ft=sill, source="measured", method="elevation_openings",
+            confidence="high" if levels.samples.get(level, 0) >= 3 else "medium",
+            sheet_id=sheet_id, samples=levels.samples.get(level, 0),
+            evidence=f"{levels.samples.get(level, 0)} openings on this storey",
+            alternatives=[
+                f"{_fmt(r, datum.units)} above floor — a second sill height on the "
+                "same storey" for r in rivals
+            ],
+        )))
+    for level, head in levels.head_ft.items():
+        out.append(Reading(key=f"level.{level}.window_head_ft", q=Quantity(
+            ft=head, source="measured", method="elevation_openings",
+            confidence="high" if levels.samples.get(level, 0) >= 3 else "medium",
+            sheet_id=sheet_id, samples=levels.samples.get(level, 0),
+            evidence="top of the openings drawn on this storey",
+        )))
+    return out
+
+
 def readings(datum: Datum, sheet_id: str, levels: list[int] | None = None) -> list[Reading]:
     """Turn stated levels into storey heights and a plinth.
 

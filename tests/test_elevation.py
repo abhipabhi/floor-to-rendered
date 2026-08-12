@@ -199,3 +199,116 @@ def test_without_an_elevation_the_heights_stay_honest_assumptions(example_pdfs):
 
     _ing, _ex, params, _result, _notes = run(example_pdfs)
     assert params.level(0).provenance["floor_to_floor_ft"].source == "default"
+
+
+# --------------------------------------------------------------------------- #
+# openings, measured against the datum
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def elev_openings(elev_sheet, elev_datum):
+    return E.find_openings(elev_sheet, elev_datum)
+
+
+def test_every_opening_on_the_face_is_found(elev_openings):
+    """Six windows and a door. They are found from raw segments, not from
+    merged runs: three window heads at one height merge into a single
+    twenty-foot line, and every one of them is then too wide to be an opening."""
+    assert len(elev_openings) == 7
+
+
+def test_a_frame_and_its_glass_count_as_one_opening(elev_sheet, elev_datum):
+    """Each window is drawn as a frame with the glass inside it, so it
+    registers twice a couple of points apart. Left in, the pair reads as two
+    different sill heights on the same storey."""
+    raw = E._drop_nested([], inset=4.0)
+    assert raw == []
+    nested = E.find_openings(elev_sheet, elev_datum)
+    sills = {round(o.y_bottom, 1) for o in nested}
+    assert len(sills) <= 3, "one sill line per storey, plus the door"
+
+
+def test_the_sill_is_measured_from_its_own_storeys_floor(elev_datum, elev_openings):
+    levels = E.opening_levels(elev_datum, elev_openings, [0, 1])
+    for level in (0, 1):
+        assert levels.sill_ft[level] * M_PER_FT == pytest.approx(1.10, abs=0.025)
+        assert levels.head_ft[level] * M_PER_FT == pytest.approx(2.45, abs=0.025)
+        assert levels.samples[level] == 3
+
+
+def test_two_sill_heights_on_one_storey_are_both_reported():
+    """1100 in the bedrooms and 650 in the living room is a real convention.
+    Averaging them gives a sill height that appears nowhere on the drawing."""
+    value, n, rivals = E._dominant([3.6, 3.6, 3.6, 2.1, 2.1])
+    assert value == pytest.approx(3.6)
+    assert n == 3
+    assert rivals and rivals[0] == pytest.approx(2.1)
+
+
+def test_the_reported_value_is_a_real_reading_not_a_bin_centre():
+    """The bin decides which readings belong together; the answer is their
+    median, so it is a number something on the drawing actually sits at."""
+    value, _n, _r = E._dominant([3.61, 3.62, 3.63])
+    assert value == pytest.approx(3.62)
+
+
+# --------------------------------------------------------------------------- #
+# the datum origin — what makes an absolute level trustworthy
+# --------------------------------------------------------------------------- #
+def test_tags_are_snapped_onto_the_lines_they_label(elev_sheet, elev_datum):
+    """A level tag is text written beside its line. Fitting the text gives the
+    right *scale*, because a constant offset cancels in the gradient — which is
+    why storey heights were already exact — but it puts the datum wherever the
+    lettering sat. A sill is measured from the datum outright, so it inherited
+    the error: 1.26m read for a 1.10m sill until the tags were snapped."""
+    raw = E.find_level_tags(elev_sheet)
+    snapped = E.snap_to_level_lines(elev_sheet, raw)
+    moved = [b.y_px - a.y_px for a, b in zip(raw, snapped)]
+    assert all(abs(m) > 0.5 for m in moved), "the tags sat off their lines"
+    assert all(abs(m) < E.SNAP_PT for m in moved)
+    # one shift for all of them, not a per-tag snap: a drafter letters the same
+    # way each time, and snapping individually drags a tag onto whatever line
+    # happens to be nearest — a string course, a band — and corrupts the fit
+    assert max(moved) - min(moved) < 1e-9, "the correction must be uniform"
+
+
+def test_the_datum_puts_the_ground_line_at_zero(elev_datum):
+    """The whole point of snapping: level 0.00 is where the drawing puts it."""
+    ground = min(elev_datum.tags, key=lambda t: t.value_ft)
+    assert elev_datum.level_at(ground.y_px) == pytest.approx(0.0, abs=0.02)
+
+
+def test_the_parapet_is_measured_above_the_roof_level(elev_sheet, elev_datum):
+    height = E.parapet_height(elev_sheet, elev_datum)
+    assert height is not None
+    assert height * M_PER_FT == pytest.approx(1.05, abs=0.05)
+
+
+# --------------------------------------------------------------------------- #
+# nothing without a datum
+# --------------------------------------------------------------------------- #
+@needs_example
+def test_a_sheet_with_no_datum_yields_no_openings_either(gf_sheet):
+    """A sill measured against a scale that was never established is a number
+    with no meaning — worse than the setting it would replace."""
+    datum, out = E.read_sheet(gf_sheet, "gf")
+    assert datum is None and out == []
+
+
+@needs_example
+def test_the_whole_set_measures_sills_parapet_and_storeys(example_pdfs, tmp_path):
+    import shutil
+
+    from app.pipeline import run
+
+    folder = tmp_path / "set6"
+    folder.mkdir()
+    for pdf in example_pdfs:
+        shutil.copy(pdf, folder)
+    ef.write(str(folder / "front elevation.pdf"))
+    _i, _e, params, _r, _n = run([str(p) for p in folder.glob("*.pdf")])
+
+    for field in ("floor_to_floor_ft", "window_sill_ft", "window_head_ft"):
+        assert params.level(0).provenance[field].source == "measured", field
+    assert params.provenance["parapet_ft"].source == "measured"
+    # and what the set genuinely does not state stays an assumption
+    assert params.level(0).provenance["door_head_ft"].source == "default"

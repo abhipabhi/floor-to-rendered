@@ -219,17 +219,31 @@ Turn it off in step 4 if you'd rather keep sheet orientation.
 
 ## Measured vs assumed
 
-| Measured from the drawings | Assumed, and set by you |
+Every number carries one of four labels, and the heights page shows it beside
+the field.
+
+**Measured** — read off a sheet that states it:
+
+| From the plans | From an elevation or section |
 |---|---|
-| wall positions, lengths, thicknesses | floor-to-floor height |
-| door and window positions and widths | sill and lintel heights |
-| column positions and sizes | slab thickness |
-| room extents and names | plinth height |
-| storey heights, where an elevation or section states its levels | every height on a set with no elevation |
-| railing positions and lengths | parapet and railing heights |
-| stair position, going, flight width and tread count | the riser — derived from the storey height, not measured |
-| the drawing scale | roof type |
-| which way north points | |
+| wall positions, lengths and thicknesses | storey heights, as the difference between two stated levels |
+| door and window positions and widths | sill and lintel heights, from the openings drawn on the face |
+| column positions and sizes | the parapet, from how far the wall carries above the roof |
+| room extents and names | the plinth, when the ground floor is stated above the datum |
+| railing positions and lengths | |
+| stair position, going, flight width and tread count | |
+| the drawing scale, and which way north points | |
+
+**Derived** — worked out from something the set states, and cited:
+the plinth beam depth from the tie beam schedule, the slab projection from
+`slab proj. 1'`, the excavation depth from the foundation note, and the stair's
+riser from the storey height over one more riser than there are treads.
+
+**Yours** — anything you type, which no later reading overwrites.
+
+**Assumed** — the rest, because nothing in the set said otherwise: slab and
+parapet thickness, railing height, door head, roof type, and on a set with no
+elevation, every height.
 
 The floor plate is the outline the walls **and columns** enclose, with openings
 up to 12 ft closed first — a car port open to the street still has a floor. That closing is

@@ -52,6 +52,48 @@ TILE_M = {
 }
 
 
+_MEANS: dict[str, float] = {}
+
+
+def texture_mean(name: str) -> float:
+    """How bright a texture is on average, measured off the image itself.
+
+    A texture multiplies the material colour, so a dark one darkens whatever it
+    is put on: teak #8B5E3C is 0.245 in linear light and the wood grain averages
+    0.279, which lands the two together at 0.068 — near black, nothing like the
+    colour the palette names. Dividing the colour through by this makes the
+    texture *modulate* around the stated colour instead of dimming it.
+
+    Measured rather than tabulated. A table of these was written by hand first
+    and four of the thirteen were wrong, which silently lifts by the wrong
+    amount — and the whole point is that the stated hex is what you get.
+    """
+    if name not in _MEANS:
+        import numpy as np
+
+        from . import textures as tex
+
+        try:
+            import fitz
+
+            pix = fitz.Pixmap(tex.png(name))
+            buf = np.frombuffer(pix.samples, dtype=np.uint8)
+            buf = buf.reshape(pix.height, pix.width, pix.n)[..., :3] / 255.0
+            # Averaged in *linear* light, because that is where the multiply
+            # happens: a renderer decodes an sRGB texture before combining it
+            # with the base colour. Averaging the raw bytes instead reads
+            # asphalt as 0.365 when it actually multiplies by 0.11, and the
+            # correction comes out three times too small — which is how the
+            # road stayed black after it had supposedly been fixed.
+            lin = np.where(
+                buf <= 0.04045, buf / 12.92, ((buf + 0.055) / 1.055) ** 2.4
+            )
+            _MEANS[name] = max(float(lin.mean()), 0.02)
+        except Exception:
+            _MEANS[name] = 1.0
+    return _MEANS[name]
+
+
 def _m(
     name: str,
     color: str,
@@ -60,10 +102,17 @@ def _m(
     metallic: float = 0.0,
     alpha: float = 1.0,
 ) -> Material:
+    tex = None if texture in (None, "none") else texture
+    rgb = hex_to_rgb(color)
+    if tex:
+        # Clamped at 1.0, so the older presets — which say #FFFFFF and let a
+        # dark texture supply the tone — come through exactly as they did.
+        lift = 1.0 / texture_mean(tex)
+        rgb = tuple(min(1.0, c * lift) for c in rgb)
     return Material(
         name=name,
-        color=hex_to_rgb(color),
-        texture=None if texture in (None, "none") else texture,
+        color=rgb,
+        texture=tex,
         tile_m=TILE_M.get(texture or "", 1.0),
         roughness=roughness,
         metallic=metallic,

@@ -253,12 +253,44 @@ FLAT_TEXTURES = ["screed", "concrete", "paving", "tile_roof", "none"]
 _cache: dict[str, bytes] = {}
 
 
+#: What a texture should average to in linear light. A texture multiplies the
+#: material colour, so anything much below this is not adding grain, it is
+#: dimming — and the colour you asked for stops being the colour you get. The
+#: wood grain used to average 0.078, which is dark enough that *no* base colour
+#: can bring teak back up to its stated value: it clamps at white and still
+#: renders near black.
+TARGET_MEAN = 0.72
+
+
+def normalise(rgb: np.ndarray, target: float = TARGET_MEAN) -> np.ndarray:
+    """Scale a texture to a standard brightness, keeping its hue and grain.
+
+    Scaled in linear light, since that is where the multiply happens. Only ever
+    brightens — a texture already lighter than the target is left alone, so the
+    plasters and concretes come through untouched.
+    """
+    lin = _to_linear(rgb / 255.0)
+    mean = float(lin.mean())
+    if mean <= 1e-4 or mean >= target:
+        return rgb
+    lin = np.clip(lin * (target / mean), 0.0, 1.0)
+    return np.clip(_to_srgb(lin) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+def _to_linear(c: np.ndarray) -> np.ndarray:
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _to_srgb(c: np.ndarray) -> np.ndarray:
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+
+
 def png(name: str) -> bytes:
     """The texture as PNG bytes, generated once per process."""
     if name not in _cache:
         if name not in GENERATORS:
             raise KeyError(name)
-        arr = GENERATORS[name]()
+        arr = normalise(GENERATORS[name]())
         _cache[name] = encode_png(arr)
     return _cache[name]
 

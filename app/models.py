@@ -202,7 +202,7 @@ class LevelParams(BaseModel):
 class FinishParams(BaseModel):
     """What the building is made of. Not in any drawing — entirely your choice."""
 
-    preset: str = "contemporary"
+    preset: str = "elevation_spec"
     # slot → [colour, texture]; anything absent falls back to the preset
     slots: dict[str, list[str | None]] = Field(default_factory=dict)
 
@@ -244,12 +244,88 @@ class DetailParams(BaseModel):
     balustrades: bool = True  # railings as glass and rail, not a solid slab
 
 
+PanelKind = Literal["field", "recess", "clad", "band", "fin", "frame", "canopy", "pier"]
+
+
+class Panel(BaseModel):
+    """One area of the front elevation: a rectangle, a material, a depth.
+
+    ``depth_ft`` is the ``lvl`` tag the supplied elevation document writes on
+    every coloured area — how far this piece stands proud of the wall behind
+    it. Positive projects towards the street, negative sets back into a recess,
+    zero is the wall face itself.
+
+    ``u`` runs along the face from its left-hand end as seen from the street;
+    ``z`` is height above the surrounding ground.
+    """
+
+    id: str
+    kind: PanelKind
+    u0: float
+    u1: float
+    z0: float
+    z1: float
+    depth_ft: float = 0.0
+    material: str = "wall_ext"
+    label: str = ""
+    #: an opening left through the panel, as ``(u0, u1, z0, z1)``. A box frame
+    #: is a surround, not a plate: filled in, it bricks up the window it was
+    #: drawn around.
+    hole: tuple[float, float, float, float] | None = None
+
+    @property
+    def width_ft(self) -> float:
+        return self.u1 - self.u0
+
+    @property
+    def height_ft(self) -> float:
+        return self.z1 - self.z0
+
+
+class FacadeParams(BaseModel):
+    """How the front is composed. Every one of these is a design choice.
+
+    The defaults reproduce the vocabulary of the supplied document's renders —
+    fins, box frames, bands, a clad entrance bay and a deep canopy — sized as
+    fractions of the building rather than as fixed numbers, so the composition
+    fits whatever plan it is handed.
+    """
+
+    enabled: bool = True
+    preset: str = "fins_and_frames"
+    #: composed once and then editable; empty means compose from the model
+    panels: list[Panel] = Field(default_factory=list)
+
+    bands: bool = True
+    band_height_ft: float = 1.1
+    box_frames: bool = True
+    frame_margin_ft: float = 0.7
+    entrance_bay: bool = True
+    bay_width_ft: float = 7.0
+    fins: bool = True
+    fin_width_ft: float = 0.5
+    fin_pitch_ft: float = 1.1
+    clad_panel: bool = True
+    canopy: bool = True
+    canopy_projection_ft: float = 3.15  # the document's own lvl +3'2"
+    canopy_depth_ft: float = 1.4
+    canopy_thickness_ft: float = 0.9
+    canopy_side_ft: float = 1.0
+
+
 class SiteParams(BaseModel):
-    """The compound and its staging. None of it is measured from the drawings."""
+    """The setting the house is shown in. None of it is in the drawings.
+
+    The default is a street scene, not a compound: paving, a kerb and the road
+    the plan names, and nothing between the camera and the front of the house.
+    The boundary wall, trees and cars are still here and still work — they are
+    simply off, because they stood in front of the elevation, which is the one
+    thing a client is looking at.
+    """
 
     enabled: bool = True
     ground: bool = True
-    boundary_wall: bool = True
+    boundary_wall: bool = False
     boundary_height_ft: float = 6.0
     boundary_thickness_ft: float = 0.75
     gate_width_ft: float = 12.0
@@ -257,9 +333,14 @@ class SiteParams(BaseModel):
     side_setback_ft: float = 8.0
     verge_ft: float = 10.0
     driveway: bool = True
-    trees: int = 4
+    trees: int = 0
     tree_height_ft: float = 14.0
-    cars: int = 1
+    cars: int = 0
+    # the street in front: forecourt paving, a kerb, and the carriageway
+    road: bool = True
+    road_width_ft: float = 26.0
+    footpath_ft: float = 5.0
+    kerb_ft: float = 0.5
 
 
 class BuildParams(BaseModel):
@@ -289,6 +370,7 @@ class BuildParams(BaseModel):
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
     detail: DetailParams = Field(default_factory=DetailParams)
+    facade: FacadeParams = Field(default_factory=FacadeParams)
     provenance: dict[str, Quantity] = Field(default_factory=dict)
     user_set: list[str] = Field(default_factory=list)
 

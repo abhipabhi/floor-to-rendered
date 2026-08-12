@@ -459,6 +459,7 @@ def build_model(job_id: str) -> dict:
             "model.glb",
             True,
             storeys=[lv["name"] for lv in result.summary.get("levels", [])],
+            facade_normal_xz=(result.summary.get("facade") or {}).get("normal_xz"),
         ),
         "model.json": _json.dumps(
             {
@@ -516,6 +517,7 @@ def catalog() -> dict:
         "railing": ["none", "metal"],
         "ground": tex.GROUND_TEXTURES,
         "drive": ["paving", "asphalt", "concrete", "none"],
+        "road": ["asphalt", "concrete", "paving", "none"],
         "boundary": tex.WALL_TEXTURES,
         "default": ["none"],
     }

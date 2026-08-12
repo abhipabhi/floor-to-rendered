@@ -23,11 +23,14 @@ SLOTS = [
     ("column", "Exposed columns"),
     ("stair", "Stairs"),
     ("frame", "Window and door frames"),
+    ("clad", "Façade cladding"),
+    ("accent", "Façade accent"),
     ("door", "Doors"),
     ("glazing", "Glazing"),
     ("railing", "Railings"),
     ("ground", "Ground"),
     ("drive", "Driveway and paving"),
+    ("road", "Road surface"),
     ("boundary", "Boundary wall"),
 ]
 
@@ -94,6 +97,34 @@ PRESETS: dict[str, dict] = {
     # stone as one warm accent, and dark slim joinery. What makes them read is
     # the *contrast between slots* — a facade in a single colour stays flat
     # however good the light is.
+    # Straight off the supplied elevation document's palette sheet, roles and
+    # all: dark grey for the roof, vertical elements and accent bands; light
+    # grey for the main wall; warm white for balconies, box frames and
+    # horizontal bands; teak for vertical cladding and gate panels.
+    "elevation_spec": {
+        "label": "Modern · elegant · timeless",
+        "note": "Dark grey, light grey, warm white and teak — the document palette.",
+        "slots": {
+            "wall_ext": ("#D6D7D9", "plaster"),      # light grey, main wall
+            "wall_int": ("#F4F4F2", "plaster"),
+            "base": ("#3D4249", "concrete"),         # dark grey
+            "trim": ("#F4F4F2", "concrete"),         # warm white bands and frames
+            "roof": ("#3D4249", "screed"),           # dark grey roof
+            "slab": ("#D6D7D9", "concrete"),
+            "stair": ("#D6D7D9", "concrete"),
+            "column": ("#F4F4F2", "plaster"),
+            "clad": ("#8B5E3C", "wood"),
+            "accent": ("#3D4249", "concrete"),
+            "door": ("#8B5E3C", "wood"),             # teak
+            "frame": ("#3D4249", None),
+            "glazing": ("#8FA8B8", None),
+            "railing": ("#3D4249", None),
+            "ground": ("#FFFFFF", "grass"),
+            "drive": ("#FFFFFF", "paving"),
+            "road": ("#5E6167", "asphalt"),
+            "boundary": ("#D6D7D9", "plaster"),
+        },
+    },
     "contemporary": {
         "label": "Contemporary",
         "note": "White render, charcoal joinery, stone base and timber doors.",
@@ -110,12 +141,15 @@ PRESETS: dict[str, dict] = {
             "slab": ("#D3CFC8", "concrete"),
             "stair": ("#C8C3BB", "concrete"),
             "column": ("#FCFBF9", "plaster"),
+            "clad": ("#7A5230", "wood"),
+            "accent": ("#33373B", "concrete"),
             "door": ("#7A5230", "wood"),
             "frame": ("#33373B", None),
             "glazing": ("#8FB6CC", None),
             "railing": ("#3A3E42", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#6E7175", "asphalt"),
             "boundary": ("#E4E1DC", "plaster"),
         },
     },
@@ -131,12 +165,15 @@ PRESETS: dict[str, dict] = {
             "slab": ("#C9C3B7", "concrete"),
             "stair": ("#BDB7AB", "concrete"),
             "column": ("#9E978B", "concrete"),
+            "clad": ("#8A5A2B", "wood"),
+            "accent": ("#5C5348", "concrete"),
             "door": ("#8A5A2B", "wood"),
             "frame": ("#4A3B2A", "wood"),
             "glazing": ("#9DC0D2", None),
             "railing": ("#5C4A34", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#6B6E72", "asphalt"),
             "boundary": ("#DED8CC", "plaster"),
         },
     },
@@ -152,12 +189,15 @@ PRESETS: dict[str, dict] = {
             "slab": ("#DEDAD2", "concrete"),
             "stair": ("#D6D2CA", "concrete"),
             "column": ("#9A9894", "concrete"),
+            "clad": ("#8A6238", "wood"),
+            "accent": ("#6E6B66", "concrete"),
             "door": ("#FFFFFF", "wood"),
             "frame": ("#5A5550", None),
             "glazing": ("#9FC4D6", None),
             "railing": ("#B7C3CB", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#71747A", "asphalt"),
             "boundary": ("#E4DED2", "plaster"),
         },
     },
@@ -173,12 +213,15 @@ PRESETS: dict[str, dict] = {
             "slab": ("#D5D1C9", "concrete"),
             "stair": ("#CDC9C1", "concrete"),
             "column": ("#C9C5BD", "concrete"),
+            "clad": ("#6E4A2C", "wood"),
+            "accent": ("#3B3733", "concrete"),
             "door": ("#6E4A2C", "wood"),
             "frame": ("#3B3733", None),
             "glazing": ("#93B9CC", None),
             "railing": ("#4A4E52", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#6E7175", "asphalt"),
             "boundary": ("#FFFFFF", "brick"),
         },
     },
@@ -194,12 +237,15 @@ PRESETS: dict[str, dict] = {
             "slab": ("#E3E0DB", "concrete"),
             "stair": ("#D8D5D0", "concrete"),
             "column": ("#5E6166", "concrete"),
+            "clad": ("#6B5636", "wood"),
+            "accent": ("#2E3236", "concrete"),
             "door": ("#3A3E42", "wood"),
             "frame": ("#2E3236", None),
             "glazing": ("#A8CBDC", None),
             "railing": ("#9FB0BA", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#70737A", "asphalt"),
             "boundary": ("#EDEAE5", "plaster"),
         },
     },
@@ -215,18 +261,21 @@ PRESETS: dict[str, dict] = {
             "slab": ("#DCCFB4", "concrete"),
             "stair": ("#D2C5AA", "concrete"),
             "column": ("#B3A183", "concrete"),
+            "clad": ("#7A4B24", "wood"),
+            "accent": ("#7A6A50", "concrete"),
             "door": ("#7A4B24", "wood"),
             "frame": ("#6B563C", None),
             "glazing": ("#A6C6D2", None),
             "railing": ("#8A7A63", None),
             "ground": ("#FFFFFF", "grass"),
             "drive": ("#FFFFFF", "paving"),
+            "road": ("#75726C", "asphalt"),
             "boundary": ("#DFC9A2", "plaster"),
         },
     },
 }
 
-DEFAULT_PRESET = "contemporary"
+DEFAULT_PRESET = "elevation_spec"
 
 ROUGHNESS = {
     "glazing": 0.08,

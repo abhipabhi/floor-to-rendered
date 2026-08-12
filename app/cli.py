@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 "model.glb",
                 bool(result.summary.get("rotation_applied_deg") is not None),
                 storeys=[lv["name"] for lv in result.summary.get("levels", [])],
+                facade_normal_xz=(result.summary.get("facade") or {}).get("normal_xz"),
             )
         )
     with open(os.path.join(args.out, "model.json"), "w") as fh:

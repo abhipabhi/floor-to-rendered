@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from . import facade as facade_mod
 from . import site as site_mod
 from .finish import materials_for
 from .footprint import footprint_rects, ring_rects
@@ -534,6 +535,26 @@ def build(
 
     # site
     bounds_ft = _plan_bounds(extracts)
+    # the façade, on the street-facing wall. Composed from the building's own
+    # proportions unless the user has edited the panels, in which case theirs win.
+    facade_summary: dict = {}
+    if params.facade.enabled and bounds_ft:
+        side = site_mod.road_side(ground_ex, road_xy)
+        frame = facade_mod.front_frame(extracts, elevations, side, params.plinth_ft)
+        if frame is not None:
+            panels = params.facade.panels or facade_mod.compose(
+                extracts, elevations, frame, params
+            )
+            built = facade_mod.build(scene, panels, frame)
+            facade_summary = {
+                "side": side,
+                "face_ft": round(frame.face, 3),
+                "width_ft": round(frame.width, 2),
+                "height_ft": round(frame.height, 2),
+                "panels": len(panels),
+                "built": built,
+            }
+
     site_summary: dict = {}
     if params.site.enabled and bounds_ft:
         site_summary = site_mod.populate(
@@ -560,6 +581,20 @@ def build(
         rotate_scene(scene, rotation)
     centre_scene(scene)
 
+    # Which way the front looks once the model has been turned. Plan +y becomes
+    # model +Z, and the scene may then be rotated to put north on an axis — so
+    # anything that wants to stand in front of the house, a camera above all,
+    # has to be told rather than assume the street is at -Z.
+    if facade_summary:
+        plan_normal = {"+y": (0.0, 1.0), "-y": (0.0, -1.0),
+                       "+x": (1.0, 0.0), "-x": (-1.0, 0.0)}[facade_summary["side"]]
+        a = math.radians(rotation)
+        nx, nz = plan_normal[0], plan_normal[1]
+        facade_summary["normal_xz"] = [
+            round(nx * math.cos(a) + nz * math.sin(a), 4),
+            round(-nx * math.sin(a) + nz * math.cos(a), 4),
+        ]
+
     b = scene.bounds()
     summary = {
         "levels": summary_levels,
@@ -568,6 +603,7 @@ def build(
             roof_top + (params.parapet_ft if params.roof == "flat_parapet" else 0.0), 2
         ),
         "north_deg": north,
+        "facade": facade_summary,
         "rotation_applied_deg": round(rotation, 2),
         "triangles": scene.triangle_count,
         "vertices": scene.vertex_count,

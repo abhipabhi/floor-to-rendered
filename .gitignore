@@ -15,3 +15,7 @@ example/
 # marketing material — studio watermarks, a designer's name — so they stay out
 # of a public repository. Nothing in the code depends on them.
 Extra examples/
+
+# The supplied elevation/spec document is a real project's drawing.
+Elevation document.pdf
+*.pdf

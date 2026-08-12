@@ -151,6 +151,54 @@ def add_boundary(scene: Scene, plot: Plot, params: SiteParams, ground_z: float) 
         _box(gm, pos - 0.09, a + 0.2, pos + 0.09, b - 0.2, z0 + h * 0.8, z0 + h * 0.85)
 
 
+def add_street(
+    scene: Scene, plot: Plot, params: SiteParams, ground_z: float
+) -> None:
+    """Footpath, kerb and carriageway along the side the plan calls ROAD.
+
+    A house presented on a lawn that stops in mid-air reads as a model. A house
+    that meets a kerb reads as a house. The street runs the full width of the
+    view rather than the width of the plot, so it carries past the edge of the
+    frame instead of ending in a visible seam.
+    """
+    path = scene.mesh("Site — footpath", "drive")
+    kerb = scene.mesh("Site — kerb", "trim")
+    road = scene.mesh("Site — road", "road")
+
+    # runs past the plot on both sides so the street leaves the frame rather
+    # than ending in a visible seam — but not so far that it swamps the model's
+    # bounds and pushes every camera back to fit a strip of tarmac in
+    along = plot.width if plot.road in ("+y", "-y") else plot.depth
+    over = along * 0.7
+    fp, kb, rw = params.footpath_ft, params.kerb_ft, params.road_width_ft
+    kerb_top = ground_z + 0.5
+
+    if plot.road in ("+y", "-y"):
+        sign = 1 if plot.road == "+y" else -1
+        edge = plot.y1 if sign > 0 else plot.y0
+        a, b = plot.x0 - over, plot.x1 + over
+        _band_y(path, a, b, edge, edge + sign * fp, ground_z, kerb_top - 0.02)
+        _band_y(kerb, a, b, edge + sign * fp, edge + sign * (fp + kb), ground_z, kerb_top)
+        _band_y(road, a, b, edge + sign * (fp + kb), edge + sign * (fp + kb + rw),
+                ground_z - 0.02, ground_z + 0.02)
+    else:
+        sign = 1 if plot.road == "+x" else -1
+        edge = plot.x1 if sign > 0 else plot.x0
+        a, b = plot.y0 - over, plot.y1 + over
+        _band_x(path, a, b, edge, edge + sign * fp, ground_z, kerb_top - 0.02)
+        _band_x(kerb, a, b, edge + sign * fp, edge + sign * (fp + kb), ground_z, kerb_top)
+        _band_x(road, a, b, edge + sign * (fp + kb), edge + sign * (fp + kb + rw),
+                ground_z - 0.02, ground_z + 0.02)
+
+
+def _band_y(mesh, a: float, b: float, c0: float, c1: float, z0: float, z1: float) -> None:
+    _box(mesh, a, min(c0, c1), b, max(c0, c1), z0, z1)
+
+
+def _band_x(mesh, a: float, b: float, c0: float, c1: float, z0: float, z1: float) -> None:
+    _box(mesh, min(c0, c1), a, max(c0, c1), b, z0, z1)
+
+
 def add_ground(
     scene: Scene, plot: Plot, ex_bounds, params: SiteParams, ground_z: float
 ) -> None:
@@ -172,6 +220,9 @@ def add_ground(
     bx0, by0, bx1, by1 = ex_bounds
     apron = scene.mesh("Site — apron", "drive")
     _box(apron, bx0 - 3.0, by0 - 3.0, bx1 + 3.0, by1 + 3.0, ground_z, ground_z + 0.06)
+
+    if params.road:
+        add_street(scene, plot, params, ground_z)
 
     if not params.driveway:
         return

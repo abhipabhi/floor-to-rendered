@@ -47,6 +47,7 @@ function step(name) {
   $$('.step').forEach(s => s.classList.toggle('on', s.id === 'step-' + name));
   $$('#steps button').forEach(b => b.classList.toggle('on', b.dataset.step === name));
   if (name === 'model') sizeViewer();
+  if (name === 'facade') loadFacade();
 }
 $$('#steps button').forEach(b => b.addEventListener('click', () => { if (!b.disabled) step(b.dataset.step); }));
 function unlock(...names) {
@@ -89,7 +90,7 @@ function setJob(job) {
     `${job.title || 'Untitled project'} · ${job.sheets.length} sheets · set ${job.id}`;
   const storeys = Object.keys(job.extracts);
   unlock('sheets');
-  if (storeys.length) unlock('check', 'heights', 'finish', 'model');
+  if (storeys.length) unlock('check', 'heights', 'finish', 'facade', 'model');
   if (!S.sheetId || !job.extracts[S.sheetId]) S.sheetId = storeys[0] || null;
   renderSheets();
   renderCheck();
@@ -590,7 +591,105 @@ async function renderFinish() {
     'The gate and driveway face the side the drawing labels ROAD, and cars park in the room it labels as parking.'));
 }
 
-// ─────────────────────────────────────────────────────────── 6 · build + viewer
+
+// ─────────────────────────────────────────────────────────── 6 · fasād
+// The front as panels: a rectangle, a material, and a lvl saying how far it
+// stands proud. Composed from the building, then editable — the elevation
+// drawing and the model are both rebuilt from whatever the panels say.
+let FACADE = null;
+
+$('#tofacade').addEventListener('click', () => step('facade'));
+$('#recompose').addEventListener('click', async () => {
+  $('#facadeworking').hidden = false;
+  try { FACADE = await jpost(`/api/jobs/${S.job.id}/facade/recompose`); drawFacade(); }
+  catch (e) { alert(e.message); }
+  finally { $('#facadeworking').hidden = true; }
+});
+
+async function loadFacade(force) {
+  if (FACADE && !force) return drawFacade();
+  $('#facadeworking').hidden = false;
+  try {
+    FACADE = await api(`/api/jobs/${S.job.id}/facade`);
+    drawFacade();
+  } catch (e) {
+    $('#elevation').innerHTML = `<p class="muted">${e.message}</p>`;
+  } finally { $('#facadeworking').hidden = true; }
+}
+
+async function saveFacade(patch) {
+  const next = Object.assign({}, FACADE.params, patch);
+  $('#facadeworking').hidden = false;
+  try {
+    FACADE = await jput(`/api/jobs/${S.job.id}/facade`, next);
+    if (S.job) S.job.build = null;
+    drawFacade();
+  } catch (e) { alert(e.message); }
+  finally { $('#facadeworking').hidden = true; }
+}
+
+const FT = v => {
+  const neg = v < 0; v = Math.abs(v);
+  const ft = Math.floor(v + 1e-6), inch = Math.round((v - ft) * 12);
+  const s = inch ? `${ft}'-${inch}"` : `${ft}'`;
+  return (neg ? '-' : '') + s;
+};
+
+function drawFacade() {
+  if (!FACADE) return;
+  $('#elevation').innerHTML = FACADE.svg;
+
+  const p = FACADE.params;
+  const f = $('#facadeform'); f.textContent = '';
+  const toggle = (key, label, hint) => {
+    const i = el('input', { type: 'checkbox' });
+    i.checked = !!p[key];
+    i.addEventListener('change', () => saveFacade({ [key]: i.checked }));
+    return el('div', { class: 'field' },
+      el('span', {}, label, hint ? el('div', { class: 'ev' }, hint) : ''), i);
+  };
+  const num = (key, label, hint) => {
+    const i = el('input', { type: 'number', step: '0.05', value: String(p[key] ?? '') });
+    i.addEventListener('change', () => saveFacade({ [key]: +i.value }));
+    return el('div', { class: 'field' },
+      el('span', {}, label, hint ? el('div', { class: 'ev' }, hint) : ''), i);
+  };
+  f.append(el('div', { class: 'grid2' },
+    toggle('canopy', 'Roof canopy', 'the deep dark slab across the top'),
+    num('canopy_projection_ft', 'Canopy lvl (ft)'),
+    toggle('fins', 'Vertical fins', 'timber, over the entrance bay'),
+    num('fin_pitch_ft', 'Fin spacing (ft)'),
+    toggle('entrance_bay', 'Clad entrance bay'),
+    num('bay_width_ft', 'Bay width (ft)'),
+    toggle('box_frames', 'Box frames', 'a surround standing proud of each opening'),
+    num('frame_margin_ft', 'Frame width (ft)'),
+    toggle('bands', 'Floor bands'),
+    num('band_height_ft', 'Band height (ft)'),
+    toggle('clad_panel', 'Feature cladding')));
+
+  const t = $('#paneltable'); t.textContent = '';
+  t.append(el('tr', {},
+    el('th', {}, 'Panel'), el('th', {}, 'Size'), el('th', {}, 'lvl')));
+  for (const panel of FACADE.panels) {
+    const lvl = el('input', {
+      type: 'number', step: '0.05', value: String(panel.depth_ft),
+      style: 'width:74px'
+    });
+    lvl.addEventListener('change', () => {
+      panel.depth_ft = +lvl.value;
+      saveFacade({ panels: FACADE.panels });
+    });
+    t.append(el('tr', {},
+      el('td', {}, el('div', {}, panel.label || panel.kind),
+        el('div', { class: 'ev' }, panel.kind)),
+      el('td', { class: 'ev' }, `${FT(panel.u1 - panel.u0)} × ${FT(panel.z1 - panel.z0)}`),
+      el('td', {}, lvl)));
+  }
+  $('#facadecount').textContent =
+    `${FACADE.panels.length} panels · front is ${FT(FACADE.frame.width_ft)} wide`;
+}
+
+// ─────────────────────────────────────────── 7 · build + viewer
 $('#tobuild').addEventListener('click', async () => {
   step('model');
   await buildModel();

@@ -42,6 +42,10 @@ NORTH_ALIGNED = {north_aligned}
 SUN_ELEVATION_DEG = {sun_elevation}
 SUN_BEARING_DEG = {sun_bearing}
 STOREYS = {storeys}
+#: which way the front of the house looks, in Blender's axes. The street side
+#: comes from the plan's own ROAD label, and the model may then be turned to put
+#: north on an axis, so the front camera has to be told where the front went.
+FACADE_DIR = {facade_dir}
 
 
 def clear_scene():
@@ -207,12 +211,20 @@ def collect(objects):
 
 
 def add_cameras(size, zmax, centre):
-    """A few framings to start from, all pointed at the building."""
+    """A few framings to start from, all pointed at the front of the building."""
+    front = mathutils.Vector((FACADE_DIR[0], FACADE_DIR[1], 0.0))
+    if front.length < 1e-6:
+        front = mathutils.Vector((0.0, -1.0, 0.0))
+    front.normalize()
+    side = mathutils.Vector((-front.y, front.x, 0.0))  # along the facade
     views = [
-        ("Camera_ThreeQuarter", mathutils.Vector((size * 1.05, -size * 1.25, zmax * 1.35)), 35),
-        ("Camera_Front", mathutils.Vector((0.0, -size * 1.9, zmax * 0.85)), 50),
-        ("Camera_Corner", mathutils.Vector((-size * 1.15, -size * 1.05, zmax * 1.1)), 35),
-        ("Camera_Aerial", mathutils.Vector((size * 0.8, -size * 0.9, zmax * 3.0)), 28),
+        ("Camera_ThreeQuarter", front * size * 1.35 + side * size * 0.95
+         + mathutils.Vector((0, 0, zmax * 1.25)), 35),
+        ("Camera_Front", front * size * 1.9 + mathutils.Vector((0, 0, zmax * 0.75)), 50),
+        ("Camera_Corner", front * size * 1.2 - side * size * 1.0
+         + mathutils.Vector((0, 0, zmax * 1.05)), 35),
+        ("Camera_Aerial", front * size * 1.1 + side * size * 0.5
+         + mathutils.Vector((0, 0, zmax * 2.8)), 28),
     ]
     first = None
     for name, offset, lens in views:
@@ -239,7 +251,11 @@ def main():
     if not imported:
         raise SystemExit("nothing imported from " + MODEL)
 
-    corners = [o.matrix_world @ mathutils.Vector(c) for o in imported for c in o.bound_box]
+    # Frame on the building, not the scene. The street and the ground run well
+    # past it on purpose, and a camera fitted to those pulls back until the
+    # house is a speck in a field of tarmac.
+    subject = [o for o in imported if not o.name.startswith("Site")] or imported
+    corners = [o.matrix_world @ mathutils.Vector(c) for o in subject for c in o.bound_box]
     xs = [c.x for c in corners]
     ys = [c.y for c in corners]
     zs = [c.z for c in corners]
@@ -299,6 +315,7 @@ def blender_script(
     storeys: list[str] | None = None,
     sun_elevation: float = 34.0,
     sun_bearing: float = 138.0,
+    facade_normal_xz: tuple[float, float] | None = None,
 ) -> str:
     """The import script, told what the model it sits next to contains.
 
@@ -306,10 +323,15 @@ def blender_script(
     script can sort the imported objects into a collection per storey without
     having to guess at them.
     """
+    # glTF is Y-up and Blender's importer converts to Z-up, mapping model
+    # (x, y, z) to (x, -z, y) — so a facade normal of (nx, nz) points along
+    # (nx, -nz) once it is in the scene.
+    nx, nz = facade_normal_xz or (0.0, -1.0)
     return TEMPLATE.format(
         glb_name=glb_name,
         north_aligned=bool(north_aligned),
         storeys=repr(list(storeys or [])),
         sun_elevation=float(sun_elevation),
         sun_bearing=float(sun_bearing),
+        facade_dir=repr((round(float(nx), 4), round(-float(nz), 4))),
     )

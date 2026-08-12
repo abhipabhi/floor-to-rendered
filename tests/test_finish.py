@@ -226,7 +226,9 @@ def test_site_is_built_into_its_own_groups():
     params = BuildParams(
         levels=[LevelParams(level=0, name="Ground floor")],
         align_north=False,
-        site=SiteParams(trees=3, cars=1),
+        # switched on explicitly: the defaults no longer include them, because
+        # a compound wall and a row of trees stand in front of the elevation
+        site=SiteParams(trees=3, cars=1, boundary_wall=True),
     )
     result = build([ex], params, road_xy=(15.0, 50.0))
     names = {m.name for m in result.scene.meshes}
@@ -242,6 +244,22 @@ def test_site_is_built_into_its_own_groups():
     assert result.summary["site"]["trees"] == 3
     assert result.summary["site"]["cars"] == 1
     assert result.summary["site"]["road_side"] == "+y"
+
+
+def test_the_default_site_is_a_street_not_a_compound():
+    """A client is looking at the front of the house. Trees, cars and a six
+    foot wall all sit between the camera and the thing being sold, so the
+    default is now paving, a kerb and the road the plan names — and the rest
+    is still there, one checkbox away."""
+    ex = _extract_with_parking()
+    params = BuildParams(
+        levels=[LevelParams(level=0, name="Ground floor")], align_north=False
+    )
+    names = {m.name for m in build([ex], params, road_xy=(15.0, 50.0)).scene.meshes}
+    for gone in ("Site — boundary wall", "Site — gate", "Site — trees", "Site — cars"):
+        assert gone not in names, gone
+    for present in ("Site — footpath", "Site — kerb", "Site — road"):
+        assert present in names, present
 
 
 def test_the_site_can_be_turned_off_entirely():

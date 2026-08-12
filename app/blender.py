@@ -211,20 +211,30 @@ def collect(objects):
 
 
 def add_cameras(size, zmax, centre):
-    """A few framings to start from, all pointed at the front of the building."""
+    """A few framings to start from, all pointed at the front of the building.
+
+    Heights are given as a fraction of the building's own height **above the
+    ground**, not as a multiple of it. Set as a multiple these sat two and a
+    half storeys over the parapet, so every view but the aerial was a picture
+    of the roof with the facade foreshortened away underneath it. A house is
+    photographed from about the height of the storey you are looking at.
+    """
     front = mathutils.Vector((FACADE_DIR[0], FACADE_DIR[1], 0.0))
     if front.length < 1e-6:
         front = mathutils.Vector((0.0, -1.0, 0.0))
     front.normalize()
     side = mathutils.Vector((-front.y, front.x, 0.0))  # along the facade
+    ground = 2.0 * centre.z - zmax
+
+    def eye(frac):
+        return mathutils.Vector((0.0, 0.0, ground + zmax * frac - centre.z))
+
     views = [
-        ("Camera_ThreeQuarter", front * size * 1.35 + side * size * 0.95
-         + mathutils.Vector((0, 0, zmax * 1.25)), 35),
-        ("Camera_Front", front * size * 1.9 + mathutils.Vector((0, 0, zmax * 0.75)), 50),
-        ("Camera_Corner", front * size * 1.2 - side * size * 1.0
-         + mathutils.Vector((0, 0, zmax * 1.05)), 35),
-        ("Camera_Aerial", front * size * 1.1 + side * size * 0.5
-         + mathutils.Vector((0, 0, zmax * 2.8)), 28),
+        ("Camera_ThreeQuarter", front * size * 1.6 + side * size * 0.72
+         + eye(0.70), 35),
+        ("Camera_Front", front * size * 2.0 + eye(0.42), 50),
+        ("Camera_Corner", front * size * 1.35 - side * size * 1.1 + eye(0.58), 35),
+        ("Camera_Aerial", front * size * 1.1 + side * size * 0.5 + eye(2.6), 28),
     ]
     first = None
     for name, offset, lens in views:

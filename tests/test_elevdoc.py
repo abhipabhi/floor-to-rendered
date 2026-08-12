@@ -75,6 +75,37 @@ def test_a_frame_is_drawn_hollow_here_too():
     assert len(drawn) == 4, "four pieces round the opening, not one plate"
 
 
+def test_the_drawing_holds_everything_composed_not_just_the_walls():
+    """The canopy caps the parapet and the screen oversails that, so both sit
+    well above ``frame.z_top``. Scaled to the walls alone they are drawn off
+    the top of the sheet, floating over the title."""
+    panels = _panels() + [
+        Panel(id="f", kind="fin", u0=10, u1=11, z0=0, z1=28, depth_ft=2.0,
+              material="clad", label="Fin"),
+    ]
+    d = elevdoc.elevation(panels, _frame(), BuildParams())   # frame tops out at 22
+    for x0, y0, x1, y1, *_rest in d.rects:
+        # the drawing area starts below the title; anything above that has
+        # overflowed the scale rather than been fitted to it
+        assert min(y0, y1) > elevdoc.MARGIN + 40, "drawn over the title block"
+        assert max(y0, y1) <= elevdoc.PAGE_H - elevdoc.MARGIN
+
+
+def test_two_panels_on_the_same_spot_do_not_print_their_tags_through_each_other():
+    """A box frame is centred on the panel it stands on, so their tags land on
+    the same point and come out as unreadable overprinted text."""
+    frame = _frame()
+    both = [
+        Panel(id="a", kind="mass", u0=10, u1=20, z0=8, z1=18, depth_ft=1.3,
+              material="clad", label="Clad bay"),
+        Panel(id="b", kind="frame", u0=12, u1=18, z0=10, z1=16, depth_ft=1.85,
+              material="trim", label="Bay window frame"),
+    ]
+    tags = [t for t in elevdoc.elevation(both, frame, BuildParams()).texts
+            if t[2].startswith("lvl ")]
+    assert len(tags) == 1, "the second tag would land on top of the first"
+
+
 def test_the_drawing_carries_dimension_chains():
     d = elevdoc.elevation(_panels(), _frame(), BuildParams())
     texts = [t[2] for t in d.texts]

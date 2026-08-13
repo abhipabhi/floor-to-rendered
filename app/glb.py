@@ -99,6 +99,15 @@ def write_glb(scene: Scene, extras: dict | None = None) -> bytes:
             "doubleSided": True,
             "pbrMetallicRoughness": pbr,
         }
+        if m.emissive > 0.0:
+            # glTF's emissiveFactor is clamped to 0..1; anything brighter goes
+            # in the strength extension, which every current viewer reads and
+            # the rest ignore harmlessly
+            mat["emissiveFactor"] = [min(1.0, c) for c in m.color]
+            if m.emissive > 1.0:
+                mat.setdefault("extensions", {})[
+                    "KHR_materials_emissive_strength"
+                ] = {"emissiveStrength": round(m.emissive, 3)}
         if m.blend:
             mat["alphaMode"] = "BLEND"
         materials.append(mat)
@@ -181,6 +190,10 @@ def write_glb(scene: Scene, extras: dict | None = None) -> bytes:
         "bufferViews": buffer_views,
         "buffers": [{"byteLength": len(buffers)}],
     }
+    # a validator rejects a file that uses an extension without declaring it
+    used_ext = sorted({e for m in materials for e in m.get("extensions", {})})
+    if used_ext:
+        gltf["extensionsUsed"] = used_ext
     if images:
         gltf["images"] = images
         gltf["textures"] = gltf_textures

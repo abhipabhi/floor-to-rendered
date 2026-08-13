@@ -238,6 +238,11 @@ class DetailParams(BaseModel):
     sill_projection_ft: float = 0.25
     chajjas: bool = True  # the sunshade over a window or door
     chajja_ft: float | None = None  # None → the projection measured off the set
+    #: Curtains behind the glass, drawn across the opening. A window with
+    #: nothing behind it is a hole into an unmodelled interior and the eye goes
+    #: straight to it; closing it is the point, so they are drawn rather than
+    #: tied back at the sides.
+    curtains: bool = True
     floor_bands: bool = True
     band_projection_ft: float = 0.17
     coping: bool = True  # the cap course on top of the parapet
@@ -406,6 +411,8 @@ class BuildParams(BaseModel):
     ground_margin_ft: float = 12.0
     align_north: bool = True
     units: Literal["m", "ft"] = "m"
+    #: the light the model is shown in; see app.sky.SKIES
+    sky: Literal["dawn", "morning", "noon"] = "morning"
     finish: FinishParams = Field(default_factory=FinishParams)
     site: SiteParams = Field(default_factory=SiteParams)
     detail: DetailParams = Field(default_factory=DetailParams)

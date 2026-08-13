@@ -517,6 +517,7 @@ let CATALOG = null;
 
 async function loadCatalog() {
   if (!CATALOG) CATALOG = await api('/api/catalog');
+  S.skies = CATALOG.skies || [];
   return CATALOG;
 }
 
@@ -576,6 +577,18 @@ async function renderFinish() {
     i.addEventListener('change', () => { obj[key] = i.checked; saveParams(); });
     return el('div', { class: 'field' }, el('span', {}, label), i);
   };
+  // the light everything is shown in — the one control here that changes the
+  // picture more than any material does
+  const sky = el('select', {});
+  for (const o of (S.skies || [])) {
+    const opt = el('option', { value: o.name }, o.label + ' — ' + o.blurb);
+    if (o.name === p.sky) opt.selected = true;
+    sky.append(opt);
+  }
+  sky.addEventListener('change', () => { p.sky = sky.value; saveParams(); });
+  if (S.skies && S.skies.length) {
+    f.append(el('div', { class: 'field' }, el('span', {}, 'Time of day'), sky));
+  }
   f.append(
     chk(p.site, 'enabled', 'Show the site at all'),
     chk(p.site, 'road', 'Road'),
@@ -731,6 +744,7 @@ async function buildModel() {
   try {
     const res = await jpost(`/api/jobs/${S.job.id}/build`);
     S.job.build = res.summary;
+    setSky(res.summary.sky);
     drawSummary(res.summary);
     drawDownloads();
     await loadModel();
@@ -776,38 +790,192 @@ let renderer, scene3, camera, controls, modelRoot, frameSize = 20;
 // A physical sky, used as the background *and*, through PMREM, as the light in
 // the scene. Without an environment, glTF PBR materials have nothing to reflect
 // and everything reads flat and grey however many lamps you add.
-const SUN_ELEVATION = 34;   // degrees above the horizon
-const SUN_AZIMUTH = 138;    // degrees, from north
+// The time of day. Comes from the build summary so the browser and the Blender
+// scene are lit by one decision (app/sky.py) rather than by two sets of numbers
+// that drift apart. These are the fallbacks for before the first build lands.
+let SKY = {
+  elevation_deg: 34, bearing_deg: 118,
+  turbidity: 2.8, rayleigh: 0.34, mie: 0.005, mie_g: 0.80,
+  sun_hex: '#FFEACB', sun_intensity: 3.0,
+  hemi_sky_hex: '#BCD6F2', hemi_ground_hex: '#7D7565', hemi_intensity: 0.28,
+  ground_hex: '#A8B189', exposure: 1.0, background_intensity: 0.26,
+  cloud_hex: '#FDFEFF', cloud_scale: 4.2, cloud_cover: 0.44,
+  cloud_softness: 0.16,
+};
+let skyDome, skyCube, sunLight, hemiLight, contextGround, cloudDome;
+
+// ── procedural noise ──────────────────────────────────────────────────────
+// The clouds and the ground both need something with structure in it, and the
+// page ships no image assets — everything here is generated, same as the wall
+// textures the model carries. Value noise summed over octaves, on a canvas
+// that wraps, so a sphere or a tiled plane has no seam.
+function fbmCanvas(size, octaves, wrap = true) {
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size / 2 | 0;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(cv.width, cv.height);
+  const rnd = [];
+  const seed = (x, y, p) => {
+    const k = ((x & 255) * 73856093 ^ (y & 255) * 19349663 ^ p * 83492791) >>> 0;
+    return (rnd[k % 4096] ??= Math.random());
+  };
+  const lerp = (a, b, t) => a + (b - a) * t * t * (3 - 2 * t);
+  const value = (x, y, p, period) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const w = (v) => (wrap ? ((v % period) + period) % period : v);
+    const s = (a, b) => seed(w(a), w(b), p);
+    return lerp(lerp(s(xi, yi), s(xi + 1, yi), xf),
+                lerp(s(xi, yi + 1), s(xi + 1, yi + 1), xf), yf);
+  };
+  for (let y = 0; y < cv.height; y++) {
+    for (let x = 0; x < cv.width; x++) {
+      let v = 0, amp = 0.5, period = 4;
+      for (let o = 0; o < octaves; o++) {
+        v += amp * value(x / cv.width * period, y / cv.height * period, o, period);
+        amp *= 0.5; period *= 2;
+      }
+      const i = (y * cv.width + x) * 4;
+      const c = Math.max(0, Math.min(255, v * 255)) | 0;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = c;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+// the same tight ramp the Blender clouds use: it is what turns smooth fog into
+// shapes with edges, and without it the layer reads as a dirty lens
+function rampCanvas(src, lo, hi, floor = 0) {
+  const cv = document.createElement('canvas');
+  cv.width = src.width; cv.height = src.height;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(src, 0, 0);
+  const img = ctx.getImageData(0, 0, cv.width, cv.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const t = Math.max(0, Math.min(1, (img.data[i] / 255 - lo) / Math.max(1e-6, hi - lo)));
+    const v = ((floor + (1 - floor) * t * t * (3 - 2 * t)) * 255) | 0;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+function buildClouds(scene) {
+  // A dome, for the reason the Blender scene uses one: a cloud plane overhead
+  // is seen edge-on from eye level and foreshortens into horizontal streaks.
+  // A cap over the sky, not a full sphere. A whole dome wraps below the
+  // horizon too, so looking level or down you are seeing the underside of the
+  // cloud layer and the entire view fogs over.
+  const geo = new THREE.SphereGeometry(
+    3200, 48, 20, 0, Math.PI * 2, 0, Math.PI * 0.40);
+  const mat = new THREE.MeshBasicMaterial({
+    color: SKY.cloud_hex,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+    fog: false,
+    toneMapped: false,
+    opacity: 0.72,
+  });
+  cloudDome = new THREE.Mesh(geo, mat);
+  cloudDome.name = 'Sky clouds';
+  cloudDome.position.y = 0;
+  cloudDome.renderOrder = -1;
+  scene.add(cloudDome);
+  return cloudDome;
+}
+
+function applyClouds() {
+  if (!cloudDome) return;
+  const noise = fbmCanvas(1024, 6);
+  const tex = new THREE.CanvasTexture(
+    rampCanvas(noise, SKY.cloud_cover + 0.06,
+               SKY.cloud_cover + 0.06 + SKY.cloud_softness));
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(SKY.cloud_scale / 4.2, SKY.cloud_scale / 4.2);
+  if (cloudDome.material.alphaMap) cloudDome.material.alphaMap.dispose();
+  cloudDome.material.alphaMap = tex;
+  cloudDome.material.color.set(SKY.cloud_hex);
+  cloudDome.material.needsUpdate = true;
+}
 
 function sunVector(distance = 1) {
-  const phi = THREE.MathUtils.degToRad(90 - SUN_ELEVATION);
-  const theta = THREE.MathUtils.degToRad(SUN_AZIMUTH);
+  const phi = THREE.MathUtils.degToRad(90 - SKY.elevation_deg);
+  const theta = THREE.MathUtils.degToRad(SKY.bearing_deg);
   return new THREE.Vector3().setFromSphericalCoords(distance, phi, theta);
 }
 
 function buildSky(renderer, scene) {
-  const sky = new Sky();
-  // has to sit inside the camera's far plane or it is clipped and never drawn
-  sky.scale.setScalar(2000);
-  const u = sky.material.uniforms;
-  // Tuned against ACES at this exposure: the Preetham model's usual rayleigh
-  // values saturate to white once tone mapped, so the sky reads as haze. These
-  // give a daylight blue that still leaves the render bright.
-  u.turbidity.value = 3.0;
-  u.rayleigh.value = 0.16;
-  u.mieCoefficient.value = 0.005;
-  u.mieDirectionalG.value = 0.80;
+  // Deliberately *not* added to the scene. As a mesh it is tone mapped with
+  // everything else, and the Preetham model's output is so bright that ACES
+  // takes it straight to grey — the same fight the Blender scene has with AgX.
+  // Rendered to a texture and used as scene.background it can be scaled by
+  // backgroundIntensity, which the lighting does not see. Same split, and the
+  // sky comes out blue.
+  skyDome = new Sky();
+  skyDome.scale.setScalar(2000);
+  return skyDome;
+}
+
+// Rebuilding the environment map is the expensive part, so this is called on a
+// change of sky rather than per frame. Without an environment, glTF PBR
+// materials have nothing to reflect and everything reads flat and grey however
+// many lamps are added — which is why the dome is also the light source.
+function applySky(renderer, scene) {
+  if (!skyDome) return;
+  const u = skyDome.material.uniforms;
+  u.turbidity.value = SKY.turbidity;
+  // The one that matters. It sets how much short-wavelength light scatters, so
+  // it is the difference between a deep blue noon and an orange dawn. This ran
+  // at 0.16 — almost no scattering — which is why the sky came out pale grey
+  // and read as haze rather than as sky.
+  u.rayleigh.value = SKY.rayleigh;
+  u.mieCoefficient.value = SKY.mie;
+  u.mieDirectionalG.value = SKY.mie_g;
   u.sunPosition.value.copy(sunVector());
 
-  scene.add(sky);
+  if (sunLight) {
+    sunLight.position.copy(sunVector(90));
+    sunLight.color.set(SKY.sun_hex);
+    sunLight.intensity = SKY.sun_intensity;
+  }
+  if (hemiLight) {
+    hemiLight.color.set(SKY.hemi_sky_hex);
+    hemiLight.groundColor.set(SKY.hemi_ground_hex);
+    hemiLight.intensity = SKY.hemi_intensity;
+  }
+  if (contextGround) contextGround.material.color.set(SKY.ground_hex);
+  applyClouds();
+  renderer.toneMappingExposure = SKY.exposure;
 
+  // PMREM needs the dome in a scene of its own; put it back afterwards, because
+  // the dome *is* the background here.
+  const envScene = new THREE.Scene();
+  envScene.add(skyDome);
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
-  const envScene = new THREE.Scene();
-  envScene.add(sky.clone());
-  scene.environment = pmrem.fromScene(envScene).texture;
+  const env = pmrem.fromScene(envScene).texture;
   pmrem.dispose();
-  return sky;
+  if (scene.environment) scene.environment.dispose();
+  scene.environment = env;
+
+  // Drawn as a mesh, not as scene.background. Rendering it to a texture and
+  // scaling it with backgroundIntensity keeps ACES from blowing it out, but
+  // the price is that everything comes back grey-mauve — a dim sky is a dim
+  // sky whichever route it takes. A pale blue is better than murk.
+  scene.background = null;
+  scene.add(skyDome);
+}
+
+function setSky(preset) {
+  if (!preset) return;
+  SKY = Object.assign({}, SKY, preset);
+  if (renderer && scene3) {
+    applySky(renderer, scene3);
+    renderer.render(scene3, camera);
+  }
 }
 
 function initViewer() {
@@ -831,14 +999,27 @@ function initViewer() {
   // Context ground. The exported model carries the plot only; this is the land
   // it sits in, so that looking down at the building shows ground rather than
   // the underside of the sky, which in the sky model is a washed-out neutral.
+  // Textured, not a flat colour. Four thousand metres of one green is a sheet
+  // of card and reads as one however good the sky above it is.
+  // Fine grain, and only a little of it. Tiled coarsely it reads as blotches
+  // of mud rather than as ground, and multiplied over the full 0..1 range it
+  // halves the colour — the sage green came out brown.
+  const grain = new THREE.CanvasTexture(
+    rampCanvas(fbmCanvas(256, 4), 0.3, 0.7, 0.90));
+  grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
+  grain.repeat.set(320, 320);
   const ctx = new THREE.Mesh(
-    new THREE.CircleGeometry(260, 64).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0xa8b189, roughness: 1.0 })
+    new THREE.CircleGeometry(4000, 96).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({
+      color: SKY.ground_hex, roughness: 1.0, map: grain,
+    })
   );
   ctx.position.y = -0.18;
   ctx.receiveShadow = true;
   ctx.name = 'Context ground';
   scene3.add(ctx);
+  contextGround = ctx;
+  buildClouds(scene3);
 
   camera = new THREE.PerspectiveCamera(36, 1, 0.1, 6000);
   // Stand it off the target before OrbitControls ever sees it. The render loop
@@ -853,7 +1034,7 @@ function initViewer() {
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI * 0.495;
 
-  const sun = new THREE.DirectionalLight(0xffeacb, 3.0);
+  const sun = new THREE.DirectionalLight(SKY.sun_hex, SKY.sun_intensity);
   sun.position.copy(sunVector(90));
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
@@ -863,7 +1044,11 @@ function initViewer() {
   sun.shadow.bias = -0.00035;
   sun.shadow.normalBias = 0.02;
   scene3.add(sun);
-  scene3.add(new THREE.HemisphereLight(0xbcd6f2, 0x7d7565, 0.25));
+  sunLight = sun;
+  hemiLight = new THREE.HemisphereLight(
+    SKY.hemi_sky_hex, SKY.hemi_ground_hex, SKY.hemi_intensity);
+  scene3.add(hemiLight);
+  applySky(renderer, scene3);
 
   // a handle on the scene, for poking at it from the console
   window.f2r = { renderer, scene: scene3, camera, controls, THREE };
@@ -913,6 +1098,8 @@ async function loadModel() {
   const size = box.getSize(new THREE.Vector3());
   const centre = box.getCenter(new THREE.Vector3());
   frameSize = Math.max(size.x, size.z, size.y);
+  if (!Number.isFinite(frameSize) || frameSize <= 0) frameSize = 20;
+  if (!centre.toArray().every(Number.isFinite)) centre.set(0, 4, 0);
   controls.target.copy(centre);
   setView('iso');
   sizeViewer();
@@ -921,16 +1108,25 @@ async function loadModel() {
 
 function setView(which) {
   if (!modelRoot) return;
-  const c = controls.target, r = frameSize * 1.15;
+  // A zero or non-finite radius puts the camera exactly on the target, and
+  // OrbitControls turns a zero-length offset into NaN spherical coordinates
+  // that never clear: every later camera.position.set() is undone on the next
+  // update and the viewer renders blank with nothing in the console. Guard the
+  // radius rather than trust whatever the bounding box came out as.
+  const c = controls.target;
+  const r = Number.isFinite(frameSize) && frameSize > 1 ? frameSize * 1.15 : 24;
   // the top view is deliberately tilted a few degrees: a camera looking exactly
   // down its own up-axis has no defined roll and lands at a random angle
   // north is −Z, so the four elevations are named for the way they face
   const p = {
-    iso: [r * 1.15, r * 0.42, r * 1.15],
-    south: [0, r * 0.36, r * 1.5],
-    north: [0, r * 0.36, -r * 1.5],
-    east: [r * 1.5, r * 0.36, 0],
-    west: [-r * 1.5, r * 0.36, 0],
+    // Low, the way a house is photographed. At r*0.42 the camera looks down
+    // on a four-kilometre ground plane and the frame is nine parts field to
+    // one part sky, which is most of why the viewer read as murky.
+    iso: [r * 1.25, r * 0.16, r * 1.25],
+    south: [0, r * 0.13, r * 1.6],
+    north: [0, r * 0.13, -r * 1.6],
+    east: [r * 1.6, r * 0.13, 0],
+    west: [-r * 1.6, r * 0.13, 0],
     top: [0, r * 1.85, r * 0.3],
   }[which];
   camera.position.set(c.x + p[0], c.y + p[1], c.z + p[2]);

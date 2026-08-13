@@ -86,14 +86,14 @@ DEPTH = {
     "pier": 0.75,
 }
 
-#: The arrangements on offer. Each is the same vocabulary in a different order,
-#: because a facade is a composition and one composition does not suit every
-#: plan — or every client.
 #: Kinds that are a solid area of finish. A window behind one of these has to
 #: be cut out of it; a fin or a post standing over one is a screen, which is
 #: the point of a screen.
 SOLID = {"clad", "mass", "recess", "band", "slab", "pier"}
 
+#: The arrangements on offer. Each is the same vocabulary in a different order,
+#: because a facade is a composition and one composition does not suit every
+#: plan — or every client.
 ARRANGEMENTS = {
     "layered": "Screen, recessed balcony and a projecting clad bay",
     "framed": "A clad bay each side of a recessed centre",

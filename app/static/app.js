@@ -578,17 +578,24 @@ async function renderFinish() {
   };
   f.append(
     chk(p.site, 'enabled', 'Show the site at all'),
-    chk(p.site, 'boundary_wall', 'Boundary wall and gate'),
-    num(p.site, 'boundary_height_ft', 'Boundary height (ft)', '0.5'),
-    num(p.site, 'gate_width_ft', 'Gate width (ft)', '0.5'),
+    chk(p.site, 'road', 'Road'),
+    chk(p.site, 'road_wall', 'Wall along the road, either side of the house'),
+    num(p.site, 'road_wall_height_ft', 'Road wall height (ft)', '0.5'),
     num(p.site, 'front_setback_ft', 'Front setback (ft)', '1'),
     num(p.site, 'side_setback_ft', 'Side setback (ft)', '1'),
-    chk(p.site, 'driveway', 'Driveway paving'),
+    chk(p.site, 'forecourt', 'Pave the setback'),
+    chk(p.site, 'lawn', 'Lawn'),
+    chk(p.site, 'boundary_wall', 'Full compound wall and gate'),
+    num(p.site, 'boundary_height_ft', 'Compound height (ft)', '0.5'),
+    num(p.site, 'gate_width_ft', 'Gate width (ft)', '0.5'),
     num(p.site, 'cars', 'Cars'),
     num(p.site, 'trees', 'Trees'),
     num(p.site, 'tree_height_ft', 'Tree height (ft)', '1'));
   f.append(el('p', { class: 'muted small' },
-    'The gate and driveway face the side the drawing labels ROAD, and cars park in the room it labels as parking.'));
+    'The road is on the side the drawing labels ROAD, and cars park in the room it '
+    + 'labels as parking. By default the house stands on the road with the wall '
+    + 'closing the frontage either side of it — a front setback only shows if you '
+    + 'pave it or grass it.'));
 }
 
 

@@ -217,8 +217,10 @@ def test_the_gate_lines_up_with_the_parking():
     assert plot.road == "+y"
     park = parking_area(ex)
     assert plot.drive_from == pytest.approx((park.x0 + park.x1) / 2)
-    # and the compound is outside the building on every side
-    assert plot.x0 < ex.bounds[0] and plot.y1 > ex.bounds[3]
+    # the compound stands off the building at the sides, and meets the front
+    # wall on the road side — the house is on the street, not set back from it
+    assert plot.x0 < ex.bounds[0] and plot.x1 > ex.bounds[2]
+    assert plot.y1 == pytest.approx(ex.bounds[3], abs=0.01)
 
 
 def test_site_is_built_into_its_own_groups():
@@ -228,7 +230,8 @@ def test_site_is_built_into_its_own_groups():
         align_north=False,
         # switched on explicitly: the defaults no longer include them, because
         # a compound wall and a row of trees stand in front of the elevation
-        site=SiteParams(trees=3, cars=1, boundary_wall=True, lawn=True, driveway=True),
+        site=SiteParams(trees=3, cars=1, boundary_wall=True, lawn=True,
+                        driveway=True, forecourt=True, front_setback_ft=9.0),
     )
     result = build([ex], params, road_xy=(15.0, 50.0))
     names = {m.name for m in result.scene.meshes}
@@ -246,22 +249,72 @@ def test_site_is_built_into_its_own_groups():
     assert result.summary["site"]["road_side"] == "+y"
 
 
-def test_the_default_site_is_a_street_not_a_compound():
-    """A client is looking at the front of the house. Trees, cars and a six
-    foot wall all sit between the camera and the thing being sold, so the
-    default is now paving, a kerb and the road the plan names — and the rest
-    is still there, one checkbox away."""
+def test_the_default_site_is_a_street_frontage_not_a_compound():
+    """A client is looking at the front of the house. Trees, cars, a lawn, a
+    forecourt and a four-sided compound all sit between the camera and the
+    thing being sold. The default is the house on the road with a wall closing
+    the frontage either side of it — and the rest is a checkbox away."""
     ex = _extract_with_parking()
     params = BuildParams(
         levels=[LevelParams(level=0, name="Ground floor")], align_north=False
     )
     names = {m.name for m in build([ex], params, road_xy=(15.0, 50.0)).scene.meshes}
-    for gone in ("Site — boundary wall", "Site — gate", "Site — trees", "Site — cars"):
+    for gone in ("Site — boundary wall", "Site — gate", "Site — trees",
+                 "Site — cars", "Site — lawn", "Site — forecourt"):
         assert gone not in names, gone
-    for present in ("Site — footpath", "Site — kerb", "Site — road", "Site — forecourt"):
+    for present in ("Site — footpath", "Site — kerb", "Site — road",
+                    "Site — road wall"):
         assert present in names, present
-    # no lawn and no path across it: paving runs from the house to the kerb
-    assert "Site — lawn" not in names
+
+
+def test_the_street_starts_at_the_house_with_no_forecourt_in_between():
+    """The car port opens onto the street. There is a footpath, because a
+    street has one — but it is the street's, running the length of the road
+    outside the wall. A *forecourt* is the plot's, it only exists if there is
+    a setback to pave, and it is what read as a patio."""
+    ex = _extract_with_parking()
+    params = BuildParams(
+        levels=[LevelParams(level=0, name="Ground floor")], align_north=False
+    )
+    from app.site import _street_edge, plot_for
+
+    sp = params.site
+    plot = plot_for(ex, sp, road_xy=(15.0, 50.0))
+    _sign, edge, a, b = _street_edge(plot, sp, ex.bounds)
+    assert edge == pytest.approx(ex.bounds[3], abs=0.01), (
+        "the frontage line is the front wall — nothing of the plot beyond it"
+    )
+    assert a < ex.bounds[0] and b > ex.bounds[2], (
+        "the footpath runs past the plot, the way a street does"
+    )
+    names = {m.name for m in build([ex], params, road_xy=(15.0, 50.0)).scene.meshes}
+    assert "Site — forecourt" not in names
+    assert "Site — footpath" in names
+
+
+def test_the_road_wall_closes_the_frontage_but_leaves_the_house_clear():
+    """A house on the street with open ground either side reads as a model on
+    a board. A wall straight across the front is worse — it stands in the
+    elevation, which is what the four-sided compound wall did."""
+    from app.mesh import Scene
+    from app.site import add_road_wall, plot_for
+
+    ex = _extract_with_parking()
+    sp = SiteParams()
+    plot = plot_for(ex, sp, road_xy=(15.0, 50.0))
+    scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
+    add_road_wall(scene, plot, sp, 0.0, ex.bounds)
+    wall = next(m for m in scene.meshes if m.name == "Site — road wall")
+
+    bx0, _by0, bx1, _by1 = ex.bounds
+    xs = [wall.positions[i] / FT_TO_M for i in range(0, len(wall.positions), 3)]
+    assert min(xs) < bx0 - 5 and max(xs) > bx1 + 5, "it runs on past the house"
+    inside = [x for x in xs if bx0 + 0.1 < x < bx1 - 0.1]
+    assert not inside, "no part of it crosses the front of the building"
+    ys = [wall.positions[i + 1] / FT_TO_M for i in range(0, len(wall.positions), 3)]
+    assert max(ys) == pytest.approx(sp.road_wall_height_ft, abs=0.01), (
+        "a compound wall, not a kerb"
+    )
 
 
 def test_the_site_can_be_turned_off_entirely():

@@ -868,8 +868,11 @@ function buildClouds(scene) {
   // A cap over the sky, not a full sphere. A whole dome wraps below the
   // horizon too, so looking level or down you are seeing the underside of the
   // cloud layer and the entire view fogs over.
+  // Inside the sky box, which is scaled to 2000 and so spans ±1000. At a
+  // radius outside that the cloud layer is *behind* the sky and never drawn —
+  // which is why the viewer had clouds in the scene graph and none on screen.
   const geo = new THREE.SphereGeometry(
-    3200, 48, 20, 0, Math.PI * 2, 0, Math.PI * 0.40);
+    880, 56, 24, 0, Math.PI * 2, 0, Math.PI * 0.48);
   const mat = new THREE.MeshBasicMaterial({
     color: SKY.cloud_hex,
     transparent: true,

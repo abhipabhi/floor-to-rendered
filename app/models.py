@@ -238,11 +238,11 @@ class DetailParams(BaseModel):
     sill_projection_ft: float = 0.25
     chajjas: bool = True  # the sunshade over a window or door
     chajja_ft: float | None = None  # None → the projection measured off the set
-    #: Curtains behind the glass, drawn across the opening. A window with
-    #: nothing behind it is a hole into an unmodelled interior and the eye goes
-    #: straight to it; closing it is the point, so they are drawn rather than
-    #: tied back at the sides.
+    #: Curtains behind the glass, tied back at each side. A window with nothing
+    #: behind it reads as a hole; a pair of curtains reads as a room someone
+    #: lives in.
     curtains: bool = True
+    curtain_tie_ft: float | None = None  # None → 45% of the opening height
     floor_bands: bool = True
     band_projection_ft: float = 0.17
     coping: bool = True  # the cap course on top of the parapet

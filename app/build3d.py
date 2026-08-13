@@ -153,76 +153,89 @@ def _inset(mesh, wall: Wall, a: float, b: float, z0: float, z1: float,
     _box_across(mesh, wall, a, b, z0, z1, face, face - normal * thick)
 
 
-#: how many folds a curtain is gathered into, per foot of window
-CURTAIN_FOLDS_PER_FT = 1.15
-#: how deep a fold is, as a fraction of the fold's own width
-CURTAIN_FOLD_DEPTH = 0.62
-#: where the tie sits, as a fraction of the opening height
-CURTAIN_TIE_AT = 0.46
+#: How wide a curtain is, as a fraction of the opening, at the head, at the
+#: tieback and at the floor. The pinch is the whole shape: it is what says
+#: "tied back" rather than "blind pulled down".
+CURTAIN_PROFILE = ((1.00, 0.30), (0.62, 0.25), (0.45, 0.13), (0.18, 0.22), (0.0, 0.26))
+
+
+def _curtain_width(t: float) -> float:
+    """Curtain half-width at height ``t`` (0 at the cill, 1 at the head)."""
+    pts = CURTAIN_PROFILE
+    for (t1, w1), (t0, w0) in zip(pts, pts[1:]):
+        if t0 - 1e-9 <= t <= t1 + 1e-9:
+            span = t1 - t0
+            k = 0.5 if span < 1e-9 else (t - t0) / span
+            k = k * k * (3 - 2 * k)          # smoothstep, so the fold is a curve
+            return w0 + (w1 - w0) * k
+    return pts[0][1] if t > pts[0][0] else pts[-1][1]
+
+
+def _shift(t: float, tie: float) -> float:
+    """Move the profile's pinch from 0.45 to wherever the tieback is."""
+    if abs(tie - 0.45) < 0.01:
+        return t
+    tie = min(max(tie, 0.12), 0.85)
+    if t <= tie:
+        return t / tie * 0.45
+    return 0.45 + (t - tie) / (1 - tie) * 0.55
 
 
 def _curtains(scene: Scene, wall: Wall, a: float, b: float, z0: float, z1: float,
-              outer: float, normal: float, d, group: str) -> None:
-    """A curtain across the window, gathered to a tie at the centre.
+              outer: float, normal: float, d, group: str,
+              steps: int = 14) -> None:
+    """A pair of curtains behind the glass, tied back at each side.
 
-    It closes the opening: an empty window is a hole into an unmodelled
-    interior and the eye goes straight to it, so the fabric covers the whole
-    aperture. Tied back at the *sides* it looks more like a curtain and does
-    not do that job, because the middle — the part you see through — is still
-    a hole.
+    Lofted, not stacked: built as boxes the pinch comes out as a visible
+    staircase, and getting the steps small enough to hide costs four times the
+    triangles of the loft. Each curtain is a slab whose inner edge follows the
+    profile, so the fold is a slanted face.
 
-    So the tie is in the middle instead. The fabric hangs full width at the
-    rail, is drawn in to a band at mid height, and falls away again below:
-    the folds deepen as they approach the tie, which is what reads as gathered
-    rather than as a blue card with a stripe across it.
+    They hang *inside*, so they are only ever seen through the glazing — which
+    is exactly where the eye expects something to be. A window with nothing
+    behind it is a large part of what makes a model read as a shell.
     """
     span, height = b - a, z1 - z0
-    if span < 0.9 or height < 1.2:
+    if span < 1.0 or height < 1.5:
         return
     m = scene.mesh(f"{group} curtains", "curtain")
     # behind the pane and behind the reveal, hanging in the room
-    front = outer - normal * (d.reveal_ft + 0.22)
-    depth = min(0.34, span * 0.14)
+    face = outer - normal * (d.reveal_ft + 0.30)
+    back = face - normal * 0.22
+    tie = (d.curtain_tie_ft / height) if d.curtain_tie_ft else 0.45
 
-    folds = max(4, int(round(span * CURTAIN_FOLDS_PER_FT)))
-    step = span / folds
-    zag = min(depth * CURTAIN_FOLD_DEPTH, step * 0.5)
-    tie = z0 + height * CURTAIN_TIE_AT
-    courses = 8
+    # the profile, as (height, inner edge) for the left curtain and the right
+    edge = []
+    for i in range(steps + 1):
+        t = i / steps
+        w = _curtain_width(_shift(t, tie)) * span
+        edge.append((z0 + t * height, a + w, b - w))
+    _loft(m, wall, edge, 1, a, face, back)
+    _loft(m, wall, edge, 2, b, face, back)
 
+
+def _loft(mesh, wall: Wall, edge, col: int, jamb: float,
+          face: float, back: float) -> None:
+    """One curtain: a slab from the jamb to a curving inner edge."""
     def p(u: float, z: float, c: float):
         """A point, from the wall's own along/height/across axes into model xyz."""
         return (u, z, c) if wall.axis == "h" else (c, z, u)
 
-    def gather(z: float) -> float:
-        """How gathered the fabric is at this height: 1 at the tie, 0 at the ends."""
-        t = abs(z - tie) / max(1e-6, max(tie - z0, z1 - tie))
-        return 1.0 - min(1.0, t) ** 1.6
-
     across = (0.0, 0.0, 1.0) if wall.axis == "h" else (1.0, 0.0, 0.0)
-    zs = [z0 + height * i / courses for i in range(courses + 1)]
-
-    for j in range(courses):
-        za, zb = zs[j], zs[j + 1]
-        ga, gb = gather(za), gather(zb)
-        for i in range(folds):
-            ua, ub = a + i * step, a + (i + 1) * step
-            # each pleat swings back and forth, and swings further where the
-            # fabric is drawn in to the tie
-            ca = front - normal * zag * (1.0 if i % 2 else 0.0) * (0.35 + 0.65 * ga)
-            cb = front - normal * zag * (0.0 if i % 2 else 1.0) * (0.35 + 0.65 * gb)
-            for flip in (1.0, -1.0):
-                n = tuple(v * flip * (1.0 if normal > 0 else -1.0) for v in across)
-                quad = (p(ua, za, ca), p(ub, za, cb), p(ub, zb, cb), p(ua, zb, ca))
-                m.add_quad(*_m(quad if flip > 0 else quad[::-1]), n)
-
-    # the tie itself, and a rail at the head for the curtain to hang from
-    band = max(0.16, height * 0.05)
-    _box_across(m, wall, a + span * 0.30, b - span * 0.30, tie - band / 2,
-                tie + band / 2, front + normal * 0.03,
-                front - normal * (zag + 0.05))
-    _box_across(m, wall, a, b, z1 - 0.12, z1,
-                front + normal * 0.02, front - normal * (zag + 0.06))
+    along = (1.0, 0.0, 0.0) if wall.axis == "h" else (0.0, 0.0, 1.0)
+    # walk the courses, emitting the three faces that are ever seen
+    for i in range(len(edge) - 1):
+        za, la, ra = edge[i]
+        zb, lb, rb = edge[i + 1]
+        ea, eb = (la, lb) if col == 1 else (ra, rb)
+        for c, flip in ((face, 1.0), (back, -1.0)):
+            n = tuple(v * flip for v in across)
+            quad = (p(jamb, za, c), p(ea, za, c), p(eb, zb, c), p(jamb, zb, c))
+            mesh.add_quad(*_m(quad if flip > 0 else quad[::-1]), n)
+        # the folded inner edge, the only part of the shape anyone reads
+        n = tuple(v * (1.0 if col == 1 else -1.0) for v in along)
+        mesh.add_quad(*_m((p(ea, za, face), p(ea, za, back),
+                           p(eb, zb, back), p(eb, zb, face))), n)
 
 
 def _m(points):

@@ -15,62 +15,58 @@ from app.units import FT_TO_M
 
 
 # --------------------------------------------------------------------------- #
-# the shape: drawn across, gathered into folds
+# the shape: a pair, tied back
 # --------------------------------------------------------------------------- #
-def test_the_curtain_closes_the_whole_opening():
-    """The point is to hide the interior. Tied back at the sides it looks more
-    like a curtain and does not do the job, because the middle — the part you
-    see through — is still a hole."""
+def test_the_curtain_is_pinched_at_the_tieback():
+    """This is the whole shape. Without the pinch it is a blind pulled down the
+    side of the window, which is not what anyone means by curtains."""
+    head = build3d._curtain_width(1.0)
+    tie = build3d._curtain_width(0.45)
+    foot = build3d._curtain_width(0.0)
+    assert tie < head and tie < foot, "narrowest where it is tied"
+    assert tie < head * 0.6, "and narrow enough to read as a tie, not a taper"
+    assert 0.0 < head < 0.5, "a curtain, not half the window"
+
+
+def test_the_profile_is_smooth_between_its_points():
+    """Sampled coarsely it is a staircase; the smoothstep is what makes the
+    fold a curve. No sample may jump more than a little from the last."""
+    ws = [build3d._curtain_width(i / 60) for i in range(61)]
+    assert max(abs(b - a) for a, b in zip(ws, ws[1:])) < 0.02
+
+
+def test_the_profile_holds_outside_its_range():
+    assert build3d._curtain_width(-0.2) == pytest.approx(
+        build3d._curtain_width(0.0))
+    assert build3d._curtain_width(1.4) == pytest.approx(
+        build3d._curtain_width(1.0))
+
+
+@pytest.mark.parametrize("tie", [0.2, 0.45, 0.7])
+def test_the_tieback_can_be_moved_and_the_pinch_moves_with_it(tie):
+    xs = [i / 100 for i in range(101)]
+    ws = [build3d._curtain_width(build3d._shift(x, tie)) for x in xs]
+    lowest = xs[ws.index(min(ws))]
+    assert abs(lowest - tie) < 0.06, f"pinch at {lowest:.2f}, tieback at {tie}"
+
+
+def test_the_pair_leaves_the_middle_of_the_window_clear():
+    """They are tied back at the sides. Anything across the centre is a blind,
+    and the drawn-across version that put fabric there was not what was wanted."""
     from app.finish import materials_for, preset_slots
     from app.mesh import Scene
     from app.models import Wall
 
     scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
-    wall = Wall(id="w", x0=0, y0=0, x1=10, y1=0.83, axis="h",
+    wall = Wall(id="w", x0=0, y0=0, x1=20, y1=0.83, axis="h",
                 exterior=True, outside="hi")
-    build3d._curtains(scene, wall, 2.0, 8.0, 3.0, 7.0, 0.83, 1.0,
+    build3d._curtains(scene, wall, 2.0, 12.0, 3.0, 9.0, 0.83, 1.0,
                       DetailParams(), "Test")
     m = scene.meshes[0]
     xs = [m.positions[i] / FT_TO_M for i in range(0, len(m.positions), 3)]
-    assert min(xs) <= 2.05 and max(xs) >= 7.95, "it must span the opening"
-    # and there is geometry across the middle, not only at the jambs
-    mid = [x for x in xs if 4.4 < x < 5.6]
-    assert mid, "nothing across the centre of the window"
-
-
-def test_the_curtain_is_gathered_into_folds():
-    """Flat, it is a blue card in a hole. The folds are what catch the light
-    on one side and not the other, which is all the shading needed here."""
-    from app.finish import materials_for, preset_slots
-    from app.mesh import Scene
-    from app.models import Wall
-
-    scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
-    wall = Wall(id="w", x0=0, y0=0, x1=10, y1=0.83, axis="h",
-                exterior=True, outside="hi")
-    build3d._curtains(scene, wall, 1.0, 7.0, 3.0, 7.0, 0.83, 1.0,
-                      DetailParams(), "Test")
-    m = scene.meshes[0]
-    zs = {round(m.positions[i + 2] / FT_TO_M, 3)
-          for i in range(0, len(m.positions), 3)}
-    assert len(zs) >= 3, f"a flat sheet, not folds: depths {sorted(zs)}"
-    assert max(zs) - min(zs) > 0.03, "the folds have no depth"
-
-
-def test_a_wider_window_gets_more_folds_not_wider_ones():
-    from app.finish import materials_for, preset_slots
-    from app.mesh import Scene
-    from app.models import Wall
-
-    def folds(width):
-        scene = Scene(materials=materials_for(preset_slots("elevation_spec")))
-        wall = Wall(id="w", x0=0, y0=0, x1=40, y1=0.83, axis="h",
-                    exterior=True, outside="hi")
-        build3d._curtains(scene, wall, 1.0, 1.0 + width, 3.0, 7.0, 0.83, 1.0,
-                          DetailParams(), "Test")
-        return scene.meshes[0].triangle_count
-
-    assert folds(12.0) > folds(4.0), "the pleats should not just stretch"
+    assert min(xs) <= 2.05 and max(xs) >= 11.95, "it reaches both jambs"
+    mid = [x for x in xs if 6.4 < x < 7.6]
+    assert not mid, "fabric across the centre of the window"
 
 
 # --------------------------------------------------------------------------- #

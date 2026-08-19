@@ -276,3 +276,23 @@ table.slots select { width: 100%; }
   font: inherit; color: var(--ink); }
 .arrangements .arr.on { border-color: var(--accent); background: var(--accent-soft); }
 .arrangements .arr strong { text-transform: capitalize; font-weight: 600; }
+
+/* the fasād chat ------------------------------------------------------- */
+.chat-card { display: flex; flex-direction: column; }
+.chatlog { display: flex; flex-direction: column; gap: 7px; max-height: 260px;
+  overflow-y: auto; padding: 2px 1px 8px; }
+.chatlog:empty { display: none; }
+.chatmsg { font-size: 13px; line-height: 1.45; padding: 7px 10px;
+  border-radius: 10px; max-width: 92%; }
+.chatmsg.you { align-self: flex-end; background: var(--accent, #2d6cdf);
+  color: #fff; border-bottom-right-radius: 3px; }
+.chatmsg.app { align-self: flex-start; background: #eef1f5;
+  border-bottom-left-radius: 3px; }
+.chatmsg.app.miss { background: #fdf1e7; }
+.chatmsg .what { display: block; margin-top: 3px; font-size: 11.5px;
+  color: var(--muted); }
+.chatbar { display: flex; gap: 6px; }
+.chatbar input { flex: 1 1 auto; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 8px; font: inherit;
+  font-size: 13px; }
+.chatbar .btn { padding: 7px 12px; }

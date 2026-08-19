@@ -637,6 +637,46 @@ async function loadFacade(force) {
   } finally { $('#facadeworking').hidden = true; }
 }
 
+// ── the fasād chat ────────────────────────────────────────────────────────
+// The instruction is read by the server against the real parameter names, so
+// what comes back is the whole façade — panels, drawing and all — and the
+// reply is a list of what it actually changed rather than a claim that it did.
+$('#chatform').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const input = $('#chatinput');
+  const text = input.value.trim();
+  if (!text || !S.job) return;
+  input.value = '';
+  say('you', text);
+  $('#facadeworking').hidden = false;
+  try {
+    const res = await jpost(`/api/jobs/${S.job.id}/facade/chat`, { text });
+    FACADE = res;
+    if (S.job) S.job.build = null;
+    drawFacade();
+    const r = res.reply || {};
+    say(r.understood ? 'app' : 'app miss', r.message || '',
+        (r.changes || []).map(c => c.said));
+  } catch (e) {
+    say('app miss', e.message);
+  } finally {
+    $('#facadeworking').hidden = true;
+    input.focus();
+  }
+});
+
+function say(who, text, detail) {
+  const box = el('div', { class: 'chatmsg ' + who }, text);
+  // the changes are listed under the sentence, so "wider" is answerable with
+  // a number rather than taken on trust
+  if (detail && detail.length > 1) {
+    for (const d of detail) box.append(el('span', { class: 'what' }, '· ' + d));
+  }
+  const log = $('#chatlog');
+  log.append(box);
+  log.scrollTop = log.scrollHeight;
+}
+
 async function saveFacade(patch) {
   const next = Object.assign({}, FACADE.params, patch);
   $('#facadeworking').hidden = false;

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from . import datum
 from . import elevdoc
 from . import facade as facade_mod
+from . import facadechat
 from . import storage
 from .blender import blender_script
 from .build3d import build, level_elevations
@@ -555,6 +556,31 @@ def set_facade(job_id: str, params: FacadeParams) -> dict:
     state.build = None
     storage.save_state(state)
     return get_facade(job_id)
+
+
+class ChatTurn(BaseModel):
+    text: str
+
+
+@app.post("/api/jobs/{job_id}/facade/chat")
+def chat_facade(job_id: str, turn: ChatTurn) -> dict:
+    """Say what the front should do; get the front, changed.
+
+    Hand-edited panels are dropped when the instruction lands, and only then.
+    ``_facade_for`` prefers stored panels over composing, so leaving them in
+    place would mean the parameters changed and the drawing did not — the edit
+    would look like it had been ignored.
+    """
+    state = _get(job_id)
+    reply = facadechat.interpret(turn.text, state.params.facade)
+    if reply.changes:
+        reply.params.panels = []
+        state.params.facade = reply.params
+        state.build = None
+        storage.save_state(state)
+    out = get_facade(job_id)
+    out["reply"] = reply.as_dict()
+    return out
 
 
 @app.post("/api/jobs/{job_id}/facade/recompose")
